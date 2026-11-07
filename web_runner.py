@@ -1,7 +1,7 @@
 import os, threading, time
 from datetime import datetime, timezone, timedelta
 import requests
-from flask import Flask, Response
+from flask import Flask, Response, request
 import smc_bot
 
 app = Flask(__name__)
@@ -39,8 +39,10 @@ def api_status():
 @app.route('/api/candles/<symbol>')
 def api_candles(symbol):
     try:
+        tf = request.args.get('tf', '1m')
+        if tf not in ['1m', '5m', '15m']: tf = '1m'
         clean = symbol.upper()
-        candles = smc_bot.get_coindcx_candles(clean, interval=smc_bot.TIMEFRAME, limit=40)
+        candles = smc_bot.get_coindcx_candles(clean, interval=tf, limit=40)
         if not candles: return {"status": "EMPTY", "candles": []}
         avg_r = smc_bot.get_avg_range(candles, 14)
         leg_c = candles[-20:]
@@ -49,7 +51,7 @@ def api_candles(symbol):
         obs = smc_bot.find_order_blocks(candles, fvgs, leg_eq)
         at = smc_bot.load_json_data(smc_bot.ACTIVE_TRADES_FILE, {})
         clean_k = clean.replace("B-", "").replace("_", "")
-        return {"status": "OK", "symbol": clean, "candles": candles, "fvgs": [{"type": f["type"], "top": f["top"], "bottom": f["bottom"], "ce": f["ce"]} for f in fvgs if not f.get("mitigated", False)], "obs": [{"type": o["type"], "high": o["high"], "low": o["low"]} for o in obs if not o.get("mitigated", False)], "active_setup": at.get(clean_k, None)}
+        return {"status": "OK", "symbol": clean, "tf": tf, "candles": candles, "fvgs": [{"type": f["type"], "top": f["top"], "bottom": f["bottom"], "ce": f["ce"]} for f in fvgs if not f.get("mitigated", False)], "obs": [{"type": o["type"], "high": o["high"], "low": o["low"]} for o in obs if not o.get("mitigated", False)], "active_setup": at.get(clean_k, None)}
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
 
