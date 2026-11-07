@@ -43,7 +43,7 @@ def start_bot_thread():
             f"✅ <b>Render.com ક્લાઉડ સર્વર પર બોટ સફળતાપૂર્વક શરૂ થઈ ગયો છે!</b>\n\n"
             f"📊 <b>સિસ્ટમ:</b> ૧૪૬-સ્લાઈડ્સ SMC એન્જિન (Trade With Ani)\n"
             f"🔍 <b>મોનિટરિંગ:</b> ૮ કોઈન્સ (BTC, ETH, SOL, XRP, BNB, DOGE, AVAX, NEAR)\n"
-            f"🛡️ <b>ફિલ્ટર્સ:</b> Fresh POI, IDM Sweep, 50 EMA, 1.0 ATR Safe SL\n"
+            f"🛡️ <b>ફિલ્ટર્સ:</b> Fresh POI, IDM Sweep, Market Structure, 1.0 ATR Safe SL\n"
             f"⚡ <b>સર્વર:</b> 24/7 Cloud (Render + Keep-Alive)\n"
             f"⏰ <b>સમય:</b> {t_now}\n\n"
             f"👤 <b>Author:</b> ANKIT RABARI (Rajkot, Gujarat)\n"
@@ -63,12 +63,14 @@ def start_bot_thread():
             if now_ts - last_hourly_ping >= 3600:
                 try:
                     t_h = datetime.now(IST).strftime('%d-%m-%Y %I:%M %p IST')
-                    active_cnt = len(smc_bot.active_trades) if hasattr(smc_bot, 'active_trades') else 0
+                    active_trades_data = smc_bot.load_json_data(smc_bot.ACTIVE_TRADES_FILE, {})
+                    active_cnt = len(active_trades_data)
+                    active_coins = ", ".join(active_trades_data.keys()) if active_cnt > 0 else "કોઈ નહીં"
                     hourly_msg = (
                         f"💚 <b>StockMindset: Hourly Health Check</b> 💚\n\n"
                         f"✅ <b>સ્ટેટસ:</b> ૧૦૦% ઓનલાઇન & હેલ્ધી\n"
                         f"🔍 <b>સ્કેનિંગ:</b> ૮ કોઈન્સ ૨૪/૭ સતત ચાલુ\n"
-                        f"📊 <b>એક્ટિવ ટ્રેડ્સ:</b> {active_cnt}\n"
+                        f"📊 <b>એક્ટિવ ટ્રેડ્સ:</b> {active_cnt} ({active_coins})\n"
                         f"🛡️ <b>એરર:</b> કોઈ એરર નથી (All Systems Normal)\n"
                         f"⏰ <b>સમય:</b> {t_h}\n\n"
                         f"👤 <i>ANKIT RABARI (Rajkot)</i>"
