@@ -416,96 +416,109 @@ def analyze_market_structure(candles):
 #                       MASTER SMC 146-SLIDE SCAN ENGINE
 # ==============================================================================
 def scan_symbol_for_smc_setup(symbol, candles):
-    if len(candles) < 30: return None
+    if len(candles) < 35: return None
 
     avg_range = get_avg_range(candles, 14)
     struct = analyze_market_structure(candles)
     trend = struct["trend"]
-    current = candles[-1]
-    prev = candles[-2]
-    c_range = max(1e-6, current["high"] - current["low"])
+
+    # SLIDE 29: CANDLE CLOSE CONFIRMATION (Confirmed 100% Closed Candle)
+    confirmed = candles[-2]
+    prev = candles[-3]
+    entry_candle = candles[-1]
+    entry_price = entry_candle["close"]
+
+    c_range = max(1e-6, confirmed["high"] - confirmed["low"])
     swing_high = struct["recent_high"]
     swing_low = struct["recent_low"]
 
-    leg_candles = candles[-20:]
+    leg_candles = candles[-25:-1]
     leg_high = max(c["high"] for c in leg_candles)
     leg_low = min(c["low"] for c in leg_candles)
     leg_eq = (leg_high + leg_low) / 2.0
 
-    fvgs = find_fvgs(candles, avg_range, leg_eq)
-    obs = find_order_blocks(candles, fvgs, leg_eq)
+    fvgs = find_fvgs(candles[:-1], avg_range, leg_eq)
+    obs = find_order_blocks(candles[:-1], fvgs, leg_eq)
 
-    lower_wick = min(current["open"], current["close"]) - current["low"]
-    is_bullish_ifc = (lower_wick / c_range) >= 0.35 and current["close"] > current["open"]
+    # 1. Closed Institutional Candle Confirmation (Slide 9 IFC & Slide 13 Brust)
+    lower_wick = min(confirmed["open"], confirmed["close"]) - confirmed["low"]
+    is_bullish_ifc = (lower_wick / c_range) >= 0.35 and confirmed["close"] > confirmed["open"]
     prev_range = prev["high"] - prev["low"]
     prev_body = abs(prev["close"] - prev["open"])
-    is_bullish_brust = (prev_range >= 1.6 * avg_range and (prev_body / max(1e-6, prev_range)) >= 0.55 and prev["close"] < prev["open"] and current["close"] > current["open"])
+    is_bullish_brust = (prev_range >= 1.6 * avg_range and (prev_body / max(1e-6, prev_range)) >= 0.55 and prev["close"] < prev["open"] and confirmed["close"] > confirmed["open"])
 
-    upper_wick = current["high"] - max(current["open"], current["close"])
-    is_bearish_ifc = (upper_wick / c_range) >= 0.35 and current["close"] < current["open"]
-    is_bearish_brust = (prev_range >= 1.6 * avg_range and (prev_body / max(1e-6, prev_range)) >= 0.55 and prev["close"] > prev["open"] and current["close"] < current["open"])
+    upper_wick = confirmed["high"] - max(confirmed["open"], confirmed["close"])
+    is_bearish_ifc = (upper_wick / c_range) >= 0.35 and confirmed["close"] < confirmed["open"]
+    is_bearish_brust = (prev_range >= 1.6 * avg_range and (prev_body / max(1e-6, prev_range)) >= 0.55 and prev["close"] > prev["open"] and confirmed["close"] < confirmed["open"])
 
+    # 2. Extreme Swing High & Low for 100% Safe Structural SL (Slide 29 & 99)
+    pullback_candles = candles[-15:-1]
+    extreme_local_low = min(c["low"] for c in pullback_candles)
+    extreme_local_high = max(c["high"] for c in pullback_candles)
+
+    # --- A. BULLISH SETUPS (Slide 43: Discount of Impulse Leg) ---
     if trend == "BULLISH":
         for ob in obs:
             if ob["type"] == "BULLISH_OB" and not ob["mitigated"] and ob["low"] <= leg_eq:
-                if current["low"] <= ob["high"] and current["close"] >= ob["low"]:
+                if confirmed["low"] <= ob["high"] and confirmed["close"] >= ob["low"]:
                     if is_bullish_ifc or is_bullish_brust:
                         candle_tag = "IFC Reversal (Slide 9)" if is_bullish_ifc else "Brust Reversal (Slide 13)"
-                        sl = min(ob["low"], current["low"]) - avg_range * 1.0
+                        sl = min(ob["low"], extreme_local_low) - avg_range * 1.0
                         tp = swing_high + avg_range * 0.20
-                        rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
+                        rr = round((tp - entry_price) / max(0.0001, (entry_price - sl)), 2)
                         if rr >= MIN_RISK_REWARD:
-                            return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"Institutional OB + {candle_tag}", "slide": "Slide 28-29 (OB) + Slide 9/13 (Institutional Candle)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                            return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"Institutional OB + {candle_tag}", "slide": "Slide 28-29 (OB) + Slide 9/13 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
         for f in fvgs:
             if f["type"] == "BULLISH" and not f["mitigated"] and f["bottom"] <= leg_eq:
-                if current["low"] <= f["ce"] and current["close"] >= f["bottom"]:
+                if confirmed["low"] <= f["ce"] and confirmed["close"] >= f["bottom"]:
                     if is_bullish_ifc or is_bullish_brust:
                         candle_tag = "IFC (Slide 9)" if is_bullish_ifc else "Brust (Slide 13)"
-                        sl = f["bottom"] - avg_range * 1.0
+                        sl = min(f["bottom"], extreme_local_low) - avg_range * 1.0
                         tp = swing_high + avg_range * 0.20
-                        rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
+                        rr = round((tp - entry_price) / max(0.0001, (entry_price - sl)), 2)
                         if rr >= MIN_RISK_REWARD:
-                            return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"FVG 50% CE + {candle_tag}", "slide": "Slide 48 (50% CE) + Slide 9/13 (Institutional Candle)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                            return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"FVG 50% CE + {candle_tag}", "slide": "Slide 48 (50% CE) + Slide 9/13 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
-        recent_low_12 = min(c["low"] for c in candles[-15:-1])
-        if current["low"] < recent_low_12 and current["close"] > recent_low_12 and is_bullish_ifc:
-            sl = current["low"] - avg_range * 1.0
+        recent_low_12 = min(c["low"] for c in candles[-18:-2])
+        if confirmed["low"] < recent_low_12 and confirmed["close"] > recent_low_12 and is_bullish_ifc:
+            sl = extreme_local_low - avg_range * 1.0
             tp = swing_high + avg_range * 0.20
-            rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
+            rr = round((tp - entry_price) / max(0.0001, (entry_price - sl)), 2)
             if rr >= MIN_RISK_REWARD:
-                return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": "IDM Liquidity Sweep + IFC Reversal (Slide 9 & 71)", "slide": "Slide 71 (Inducement Sweep) + Slide 9 (IFC)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": "IDM Liquidity Sweep + IFC Reversal (Slide 9 & 71)", "slide": "Slide 71 (Inducement Sweep) + Slide 9 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
+    # --- B. BEARISH SETUPS (Slide 43: Premium of Impulse Leg) ---
     elif trend == "BEARISH":
         for ob in obs:
             if ob["type"] == "BEARISH_OB" and not ob["mitigated"] and ob["high"] >= leg_eq:
-                if current["high"] >= ob["low"] and current["close"] <= ob["high"]:
+                if confirmed["high"] >= ob["low"] and confirmed["close"] <= ob["high"]:
                     if is_bearish_ifc or is_bearish_brust:
                         candle_tag = "IFC Reversal (Slide 9)" if is_bearish_ifc else "Brust Reversal (Slide 13)"
-                        sl = max(ob["high"], current["high"]) + avg_range * 1.0
+                        sl = max(ob["high"], extreme_local_high) + avg_range * 1.0
                         tp = swing_low - avg_range * 0.20
-                        rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
+                        rr = round((entry_price - tp) / max(0.0001, (sl - entry_price)), 2)
                         if rr >= MIN_RISK_REWARD:
-                            return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"Institutional OB + {candle_tag}", "slide": "Slide 28-29 (OB) + Slide 9/13 (Institutional Candle)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                            return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"Institutional OB + {candle_tag}", "slide": "Slide 28-29 (OB) + Slide 9/13 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
         for f in fvgs:
             if f["type"] == "BEARISH" and not f["mitigated"] and f["top"] >= leg_eq:
-                if current["high"] >= f["ce"] and current["close"] <= f["top"]:
+                if confirmed["high"] >= f["ce"] and confirmed["close"] <= f["top"]:
                     if is_bearish_ifc or is_bearish_brust:
                         candle_tag = "IFC (Slide 9)" if is_bearish_ifc else "Brust (Slide 13)"
-                        sl = f["top"] + avg_range * 1.0
+                        sl = max(f["top"], extreme_local_high) + avg_range * 1.0
                         tp = swing_low - avg_range * 0.20
-                        rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
+                        rr = round((entry_price - tp) / max(0.0001, (sl - entry_price)), 2)
                         if rr >= MIN_RISK_REWARD:
-                            return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"FVG 50% CE + {candle_tag}", "slide": "Slide 48 (50% CE) + Slide 9/13 (Institutional Candle)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                            return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"FVG 50% CE + {candle_tag}", "slide": "Slide 48 (50% CE) + Slide 9/13 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
-        recent_high_12 = max(c["high"] for c in candles[-15:-1])
-        if current["high"] > recent_high_12 and current["close"] < recent_high_12 and is_bearish_ifc:
-            sl = current["high"] + avg_range * 1.0
+        recent_high_12 = max(c["high"] for c in candles[-18:-2])
+        if confirmed["high"] > recent_high_12 and confirmed["close"] < recent_high_12 and is_bearish_ifc:
+            sl = extreme_local_high + avg_range * 1.0
             tp = swing_low - avg_range * 0.20
-            rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
+            rr = round((entry_price - tp) / max(0.0001, (sl - entry_price)), 2)
             if rr >= MIN_RISK_REWARD:
-                return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": "IDM Liquidity Sweep + IFC Reversal (Slide 9 & 71)", "slide": "Slide 71 (Inducement Sweep) + Slide 9 (IFC)", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": "IDM Liquidity Sweep + IFC Reversal (Slide 9 & 71)", "slide": "Slide 71 (Inducement Sweep) + Slide 9 (Candle Close)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
 
     return None
 
