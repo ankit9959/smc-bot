@@ -16,8 +16,8 @@ def send_system_alert(msg):
 
 @app.route('/')
 def home():
-    if os.path.exists("dashboard.html"):
-        with open("dashboard.html", encoding="utf-8") as f:
+    if os.path.exists("dashboard_v2.html"):
+        with open("dashboard_v2.html", encoding="utf-8") as f:
             return Response(f.read(), mimetype='text/html')
     return {"status": "ONLINE", "author": "ANKIT RABARI"}
 
@@ -28,14 +28,35 @@ def api_status():
         jn = smc_bot.load_json_data(smc_bot.JOURNAL_FILE, [])
         tot, w = len(jn), len([j for j in jn if j.get("status") == "WIN"])
         wr = round((w / tot * 100), 1) if tot > 0 else 0
-        return {"status": "ONLINE", "active_trades": at, "journal": jn[-20:], "stats": {"total": tot, "wins": w, "losses": tot - w, "win_rate": wr}, "coins": smc_bot.WATCHLIST}
+        t_today = datetime.now(IST).strftime("%d-%b-%Y")
+        t_month = datetime.now(IST).strftime("%b-%Y")
+        today_trades = len([j for j in jn if j.get("date", "") == t_today])
+        month_trades = len([j for j in jn if t_month in j.get("date", "")])
+        return {"status": "ONLINE", "active_trades": at, "journal": jn[-20:], "stats": {"total": tot, "wins": w, "losses": tot - w, "win_rate": wr, "today_trades": today_trades, "month_trades": month_trades}, "coins": smc_bot.WATCHLIST}
+    except Exception as e:
+        return {"status": "ERROR", "error": str(e)}
+
+@app.route('/api/candles/<symbol>')
+def api_candles(symbol):
+    try:
+        clean = symbol.upper()
+        candles = smc_bot.get_coindcx_candles(clean, interval=smc_bot.TIMEFRAME, limit=40)
+        if not candles: return {"status": "EMPTY", "candles": []}
+        avg_r = smc_bot.get_avg_range(candles, 14)
+        leg_c = candles[-20:]
+        leg_eq = (max(c["high"] for c in leg_c) + min(c["low"] for c in leg_c)) / 2.0
+        fvgs = smc_bot.find_fvgs(candles, avg_r, leg_eq)
+        obs = smc_bot.find_order_blocks(candles, fvgs, leg_eq)
+        at = smc_bot.load_json_data(smc_bot.ACTIVE_TRADES_FILE, {})
+        clean_k = clean.replace("B-", "").replace("_", "")
+        return {"status": "OK", "symbol": clean, "candles": candles, "fvgs": [{"type": f["type"], "top": f["top"], "bottom": f["bottom"], "ce": f["ce"]} for f in fvgs if not f.get("mitigated", False)], "obs": [{"type": o["type"], "high": o["high"], "low": o["low"]} for o in obs if not o.get("mitigated", False)], "active_setup": at.get(clean_k, None)}
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
 
 def start_bot_thread():
     time.sleep(3)
     t_now = datetime.now(IST).strftime('%d-%m-%Y %I:%M:%S %p IST')
-    send_system_alert(f"🚀 <b>StockMindset System Monitor: Live!</b> 🚀\n\n✅ <b>Render.com ક્લાઉડ સર્વર પર બોટ સફળતાપૂર્વક શરૂ થઈ ગયો છે!</b>\n📊 <b>સિસ્ટમ:</b> ૧૪૬-સ્લાઈડ્સ SMC એન્જિન\n🔍 <b>મોનિટરિંગ:</b> ૮ કોઈન્સ\n⏰ <b>સમય:</b> {t_now}\n👤 <i>Author: ANKIT RABARI (Rajkot)</i>")
+    send_system_alert(f"🚀 <b>StockMindset System Monitor: Live!</b> 🚀\\n\\n✅ <b>Render.com ક્લાઉડ સર્વર પર બોટ સફળતાપૂર્વક શરૂ થઈ ગયો છે!</b>\\n📊 <b>સિસ્ટમ:</b> ૧૪૬-સ્લાઈડ્સ SMC એન્જિન\\n🔍 <b>મોનિટરિંગ:</b> ૮ કોઈન્સ\\n⏰ <b>સમય:</b> {t_now}\\n👤 <i>Author: ANKIT RABARI (Rajkot)</i>")
     last_ping = time.time()
     while True:
         try:
@@ -44,11 +65,11 @@ def start_bot_thread():
             if now - last_ping >= 3600:
                 at = smc_bot.load_json_data(smc_bot.ACTIVE_TRADES_FILE, {})
                 c_str = ", ".join(at.keys()) if at else "કોઈ નહીં"
-                send_system_alert(f"💚 <b>StockMindset: Hourly Health Check</b> 💚\n\n✅ <b>સ્ટેટસ:</b> ૧૦૦% ઓનલાઇન & હેલ્ધી\n🔍 <b>સ્કેનિંગ:</b> ૮ કોઈન્સ ૨૪/૭ સતત ચાલુ\n📊 <b>એક્ટિવ ટ્રેડ્સ:</b> {len(at)} ({c_str})\n🛡️ <b>એરર:</b> કોઈ એરર નથી\n⏰ <b>સમય:</b> {datetime.now(IST).strftime('%d-%m-%Y %I:%M %p IST')}\n👤 <i>ANKIT RABARI (Rajkot)</i>")
+                send_system_alert(f"💚 <b>StockMindset: Hourly Health Check</b> 💚\\n\\n✅ <b>સ્ટેટસ:</b> ૧૦૦% ઓનલાઇન & હેલ્ધી\\n🔍 <b>સ્કેનિંગ:</b> ૮ કોઈન્સ ૨૪/૭ સતત ચાલુ\\n📊 <b>એક્ટિવ ટ્રેડ્સ:</b> {len(at)} ({c_str})\\n🛡️ <b>એરર:</b> કોઈ એરર નથી\\n⏰ <b>સમય:</b> {datetime.now(IST).strftime('%d-%m-%Y %I:%M %p IST')}\\n👤 <i>ANKIT RABARI (Rajkot)</i>")
                 last_ping = now
             time.sleep(smc_bot.SCAN_INTERVAL_SECONDS)
         except Exception as e:
-            send_system_alert(f"⚠️ <b>StockMindset System Alert</b> ⚠️\n\n❌ <b>એરર:</b> {str(e)[:200]}")
+            send_system_alert(f"⚠️ <b>StockMindset System Alert</b> ⚠️\\n\\n❌ <b>એરર:</b> {str(e)[:200]}")
             time.sleep(15)
 
 if __name__ == '__main__':
