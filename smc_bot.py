@@ -225,29 +225,60 @@ def send_telegram_alert(message: str, photo_path: str = None) -> bool:
 #                   DATA FETCHER (COINDCX - UNBLOCKED IN INDIA)
 # ==============================================================================
 def get_coindcx_candles(symbol: str, interval: str = TIMEFRAME, limit: int = 60):
-    clean_sym = symbol.replace("USDT", "")
+    clean_sym = symbol.replace("USDT", "").replace("B-", "").replace("_", "")
     pair = f"B-{clean_sym}_USDT"
-    url = f"https://public.coindcx.com/market_data/candles/?pair={pair}&interval={interval}&limit={limit}"
-    try:
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        if not isinstance(data, list) or len(data) == 0:
-            return []
-        candles = []
-        for d in data:
-            candles.append({
-                "time": int(d["time"]),
-                "open": float(d["open"]),
-                "high": float(d["high"]),
-                "low": float(d["low"]),
-                "close": float(d["close"]),
-                "volume": float(d.get("volume", 100.0))
-            })
-        candles.sort(key=lambda c: c["time"])
-        return candles
-    except Exception as e:
-        print(f"CoinDCX Fetch Error for {symbol}: {e}")
-        return []
+    res_map = {"1m": "1", "5m": "5", "15m": "15", "1h": "60"}
+    res = res_map.get(interval, "15")
+    sec_per_candle = int(res) * 60
+    to_time = int(time.time())
+    from_time = to_time - (limit * sec_per_candle)
+    fut_url = f"https://api.coindcx.com/exchange/v1/derivatives/futures/data/candlesticks?pair={pair}&from={from_time}&to={to_time}&resolution={res}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    
+    for attempt in range(2):
+        try:
+            res_f = requests.get(fut_url, headers=headers, timeout=12)
+            if res_f.status_code == 200:
+                raw_data = res_f.json()
+                items = raw_data.get("data", []) if isinstance(raw_data, dict) else raw_data
+                if isinstance(items, list) and len(items) > 0:
+                    candles = []
+                    for d in items:
+                        candles.append({
+                            "time": int(d.get("time", d.get("timestamp", 0))),
+                            "open": float(d["open"]),
+                            "high": float(d["high"]),
+                            "low": float(d["low"]),
+                            "close": float(d["close"]),
+                            "volume": float(d.get("volume", 100.0))
+                        })
+                    candles.sort(key=lambda c: c["time"])
+                    if len(candles) >= 10: return candles
+        except Exception:
+            pass
+            
+    spot_url = f"https://public.coindcx.com/market_data/candles/?pair={pair}&interval={interval}&limit={limit}"
+    for attempt in range(2):
+        try:
+            res_s = requests.get(spot_url, headers=headers, timeout=12)
+            if res_s.status_code == 200:
+                data = res_s.json()
+                if isinstance(data, list) and len(data) > 0:
+                    candles = []
+                    for d in data:
+                        candles.append({
+                            "time": int(d["time"]),
+                            "open": float(d["open"]),
+                            "high": float(d["high"]),
+                            "low": float(d["low"]),
+                            "close": float(d["close"]),
+                            "volume": float(d.get("volume", 100.0))
+                        })
+                    candles.sort(key=lambda c: c["time"])
+                    return candles
+        except Exception:
+            pass
+    return []
 
 # ==============================================================================
 #                 PHASE 1: 5 INSTITUTIONAL CANDLES (SLIDES 6-24)
