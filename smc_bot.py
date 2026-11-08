@@ -544,7 +544,9 @@ def scan_symbol_for_smc_setup(symbol, candles):
             rr = round((entry_price - tp) / max(0.0001, (sl - entry_price)), 2)
             if rr >= MIN_RISK_REWARD:
                 return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH (IDM Swept)", "setup_name": "IDM Liquidity Sweep + IFC Reversal (Slide 9 & 71)", "slide": "Slide 71 (Inducement Sweep) + Slide 9 (IFC)", "entry": entry_price, "sl": sl, "target": tp, "rrr": rr}
-    return None\n\ndef run_master_scan_pass():
+    return None
+
+def run_master_scan_pass():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Scan Across {len(WATCHLIST)} Coins...")
     current_ts = time.time()
     for sym in WATCHLIST:
