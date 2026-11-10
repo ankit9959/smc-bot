@@ -9,6 +9,9 @@ import time
 import requests
 import json
 import os
+import urllib.request, urllib.parse
+import hmac
+import hashlib
 import hmac
 import hashlib
 from datetime import datetime
@@ -774,26 +777,16 @@ def get_coindcx_signature(secret, body_json):
 def coindcx_private_request(endpoint, payload_dict):
     api_k = COINDCX_API_KEY or os.environ.get("COINDCX_API_KEY", "")
     sec_k = COINDCX_SECRET_KEY or os.environ.get("COINDCX_SECRET_KEY", "")
-    if not api_k or not sec_k:
-        return {"error": "API Key or Secret Key missing"}
+    if not api_k or not sec_k: return {"error": "API Key missing"}
     url = f"{COINDCX_BASE_URL}{endpoint}"
     payload_json = json.dumps(payload_dict, separators=(',', ':'))
     sig = get_coindcx_signature(sec_k, payload_json)
-    headers = {
-        "Content-Type": "application/json",
-        "X-AUTH-APIKEY": api_k,
-        "X-AUTH-SIGNATURE": sig,
-        "User-Agent": "StockMindset-Bot/1.0"
-    }
+    headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": api_k, "X-AUTH-SIGNATURE": sig, "User-Agent": "StockMindset/1.0"}
     try:
-        req = urllib.request.Request(url, data=payload_json.encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8")
-        return {"error": f"HTTP {e.code}: {err_msg}"}
-    except Exception as e:
-        return {"error": str(e)}
+        r = requests.post(url, data=payload_json, headers=headers, timeout=10)
+        try: return r.json()
+        except: return {"status_code": r.status_code, "text": r.text}
+    except Exception as e: return {"error": str(e)}
 
 def load_live_log():
     if not os.path.exists(LIVE_LOG_FILE): return {"trades": [], "active": None}
