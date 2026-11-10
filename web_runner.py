@@ -60,7 +60,7 @@ def api_candles(symbol):
 def test_coindcx_route():
     try:
         import time, json, urllib.request
-        res = smc_bot.coindcx_private_request("/exchange/v1/users/balances", {"timestamp": int(time.time() * 1000)})
+        res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"timestamp": int(time.time() * 1000)})
         t_now = datetime.now(IST).strftime("%I:%M:%S %p")
         if isinstance(res, list) or (isinstance(res, dict) and "error" not in res and res.get("status") != "error"):
             msg = (f"✅ <b>COINDCX LIVE API CONNECTED 100% PERFECTLY!</b> ✅\n\n"
