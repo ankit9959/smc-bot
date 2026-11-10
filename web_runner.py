@@ -1,8 +1,3 @@
-@app.route('/myip')
-def myip():
-    try: return requests.get('https://api.ipify.org', timeout=5).text.strip()
-    except Exception as e: return str(e)
-
 import os, threading, time
 from datetime import datetime, timezone, timedelta
 import requests
@@ -10,6 +5,10 @@ from flask import Flask, Response, request
 import smc_bot
 
 app = Flask(__name__)
+
+@app.route('/myip')
+def myip():
+    return requests.get('https://api.ipify.org', timeout=5).text.strip()
 IST = timezone(timedelta(hours=5, minutes=30))
 SYS_BOT_TOKEN = "9136543586:AAEuTAHXyxUed3yitU0rTUHMrLyisLzM-oI"
 SYS_CHAT_ID = "8611777710"
@@ -78,7 +77,7 @@ def test_coindcx_route():
             return {"status": "SUCCESS", "message": "CoinDCX Connected Successfully!", "data": res[:2] if isinstance(res, list) else res}
         else:
             err = res.get("error") or res.get("message") or str(res)
-            try: cur_ip = requests.get("https://api.ipify.org", timeout=5).text.strip()\n            except: cur_ip = "Unknown"\n            msg = f"⚠️ <b>COINDCX TEST FAILED:</b> <code>{err}</code>\n• <b>Render Real IP:</b> <code>{cur_ip}</code>\n⏰ Time: {t_now}"
+            msg = f"⚠️ <b>COINDCX TEST FAILED:</b> <code>{err}</code>\n⏰ Time: {t_now}"
             try: smc_bot.send_real_telegram_alert(msg)
             except: pass
             return {"status": "FAILED", "error": err}
