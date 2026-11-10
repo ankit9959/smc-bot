@@ -735,17 +735,8 @@ def execute_real_smc_trade(setup):
     data["active"] = trade_data
     save_live_log(data)
 
-    msg = f"🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀
-
-• <b>Coin:</b> {sym}
-• <b>Action:</b> {'🟢 BUY / LONG' if act == 'LONG' else '🔴 SELL / SHORT'}
-• <b>Quantity:</b> {qty}
-• <b>Entry:</b> ${entry}
-• <b>Stop Loss:</b> ${sl}
-• <b>Target:</b> ${target}
-• <b>Max Risk:</b> ₹{RISK_AMOUNT_INR} (Strictly 3%)
-• <b>Today Trade Count:</b> {today_count + 1}/{MAX_DAILY_TRADES}
-⏰ <b>Time:</b> {t_now}"
+    act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
+    msg = ("🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀\n\n" + "• <b>Coin:</b> " + str(sym) + "\n" + "• <b>Action:</b> " + str(act_name) + "\n" + "• <b>Quantity:</b> " + str(qty) + "\n" + "• <b>Entry:</b> $" + str(entry) + "\n" + "• <b>Stop Loss:</b> $" + str(sl) + "\n" + "• <b>Target:</b> $" + str(target) + "\n" + "• <b>Max Risk:</b> ₹" + str(RISK_AMOUNT_INR) + " (Strictly 3%)\n" + "• <b>Today Trade Count:</b> " + str(today_count + 1) + "/" + str(MAX_DAILY_TRADES) + "\n" + "⏰ <b>Time:</b> " + str(t_now))
     try: send_telegram_alert(msg)
     except: pass
     return True
