@@ -713,6 +713,15 @@ def calculate_lot_size(symbol, entry_price, sl_price):
     else: qty = round(max(0.1, raw_qty), 2)
     return qty
 
+
+REAL_TELEGRAM_BOT_TOKEN = "9151662883:AAHB4UPLWysHgzqa84J8fN2Lg8PFvqjXG_c"
+REAL_TELEGRAM_CHAT_ID = "8611777710"
+def send_real_telegram_alert(msg):
+    try:
+        url = f"https://api.telegram.org/bot{REAL_TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": REAL_TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=5)
+    except: pass
+
 def execute_real_smc_trade(setup):
     if not LIVE_TRADING or not COINDCX_API_KEY: return False
     today_count = get_today_live_trades_count()
@@ -736,73 +745,5 @@ def execute_real_smc_trade(setup):
     save_live_log(data)
 
     act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
+    act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
     msg = ("🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀\n\n" + "• <b>Coin:</b> " + str(sym) + "\n" + "• <b>Action:</b> " + str(act_name) + "\n" + "• <b>Quantity:</b> " + str(qty) + "\n" + "• <b>Entry:</b> $" + str(entry) + "\n" + "• <b>Stop Loss:</b> $" + str(sl) + "\n" + "• <b>Target:</b> $" + str(target) + "\n" + "• <b>Max Risk:</b> ₹" + str(RISK_AMOUNT_INR) + " (Strictly 3%)\n" + "• <b>Today Trade Count:</b> " + str(today_count + 1) + "/" + str(MAX_DAILY_TRADES) + "\n" + "⏰ <b>Time:</b> " + str(t_now))
-    try: send_telegram_alert(msg)
-    except: pass
-    return True
-
-def on_live_trade_closed(sym, outcome):
-    data = load_live_log()
-    active = data.get("active")
-    if not active: return
-    if active.get("coin") == sym or sym in active.get("coin", ""):
-        active["closed_time"] = datetime.now().strftime("%H:%M:%S")
-        active["outcome"] = outcome
-        data["trades"].append(active)
-        data["active"] = None
-        save_live_log(data)
-
-
-def run_master_scan_pass():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Scan Across {len(WATCHLIST)} Coins...")
-    current_ts = time.time()
-    for sym in WATCHLIST:
-        try:
-            candles = get_coindcx_candles(sym, interval=TIMEFRAME, limit=60)
-            if not candles: continue
-            try: check_active_trade_outcomes(sym, candles[-1])
-            except: pass
-            setup = scan_symbol_for_smc_setup(sym, candles)
-            if setup:
-                alert_key = f"{sym}_{setup['action']}_{setup.get('setup_name')}"
-                active = load_json_data(ACTIVE_TRADES_FILE, {})
-                clean_sym = sym.replace("B-", "").replace("_", "")
-                if clean_sym in active or sym in active:
-                    continue
-                if alert_key in alerted_trades and (current_ts - alerted_trades[alert_key] < COOLDOWN_SECONDS):
-                    continue
-                alerted_trades[alert_key] = current_ts
-                print(f"--> Found Valid SMC Trade on {sym}: {setup['action']} ({setup.get('setup_name')})")
-                register_active_trade(sym, setup)
-                try: execute_real_smc_trade(setup)
-                except: pass
-                action_emoji = "🟢 LONG" if setup['action'] == 'LONG' else "🔴 SHORT"
-                entry_f, sl_f, target_f, rrr_f = format_price(setup['entry']), format_price(setup['sl']), format_price(setup['target']), str(setup.get('rrr', '2.0'))
-                msg = (f"🎯 <b>NEW SMC INSTITUTIONAL SETUP: {sym}</b> 🎯\n\n• <b>Action:</b> {action_emoji}\n• <b>Trend:</b> {setup['trend']} (Slide 43)\n• <b>Pattern:</b> {setup.get('setup_name')}\n• <b>Source:</b> {setup.get('slide')}\n\n🔹 <b>Entry:</b> ${entry_f}\n🛑 <b>Stop Loss:</b> ${sl_f}\n🏁 <b>Target:</b> ${target_f}\n⚖️ <b>Risk:Reward:</b> 1:{rrr_f}\n\n🛡️ <b>Verified Filters:</b>\n  ✔️ Slide 40: Fresh Unmitigated Zone\n  ✔️ Slide 43: Go With Trend\n  ✔️ Slide 59: Liquidity Swept\n  ✔️ Slide 29: Reversal Candle Confirmed\n\n⏰ <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}")
-                photo_file, photo_sent = f"chart_{sym}.png", False
-                try:
-                    generated_chart = draw_smc_chart(sym, TIMEFRAME, candles, setup=setup, output_path=photo_file)
-                    if generated_chart and os.path.exists(generated_chart):
-                        send_telegram_alert(msg, photo_path=generated_chart)
-                        photo_sent = True
-                        print(f"--> Telegram Alert with Photo sent for {sym}!")
-                except Exception as p_err: print(f"Photo error {sym}: {p_err}")
-                if not photo_sent:
-                    send_telegram_alert(msg)
-                    print(f"--> Telegram Text Alert sent for {sym}!")
-        except Exception as e:
-            print(f"Error scanning {sym}: {e}")
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Scan pass completed.")
-
-if __name__ == "__main__":
-    print("SMC Bot is running in continuous loop. Press CTRL+C to stop.")
-    while True:
-        try:
-            run_master_scan_pass()
-            time.sleep(SCAN_INTERVAL_SECONDS)
-        except KeyboardInterrupt:
-            print("Bot stopped by user.")
-            break
-        except Exception as e:
-            print(f"Loop Error: {e}")
-            time.sleep(10)
