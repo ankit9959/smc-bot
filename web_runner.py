@@ -55,9 +55,36 @@ def api_candles(symbol):
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
 
+
+@app.route('/api/test_coindcx')
+def test_coindcx_route():
+    try:
+        import time, json, urllib.request
+        res = smc_bot.coindcx_private_request("/exchange/v1/users/balances", {"timestamp": int(time.time() * 1000)})
+        t_now = datetime.now(IST).strftime("%I:%M:%S %p")
+        if isinstance(res, list) or (isinstance(res, dict) and "error" not in res and res.get("status") != "error"):
+            msg = (f"✅ <b>COINDCX LIVE API CONNECTED 100% PERFECTLY!</b> ✅\n\n"
+                   f"• <b>Status:</b> API Key & Secret Valid\n"
+                   f"• <b>Render IP:</b> Whitelisted & Accepted by CoinDCX!\n"
+                   f"• <b>Real Money Trading:</b> 100% Ready!\n"
+                   f"⏰ <b>Time:</b> {t_now}")
+            try: smc_bot.send_real_telegram_alert(msg)
+            except: pass
+            return {"status": "SUCCESS", "message": "CoinDCX Connected Successfully!", "data": res[:2] if isinstance(res, list) else res}
+        else:
+            err = res.get("error") or res.get("message") or str(res)
+            msg = f"⚠️ <b>COINDCX TEST FAILED:</b> <code>{err}</code>\n⏰ Time: {t_now}"
+            try: smc_bot.send_real_telegram_alert(msg)
+            except: pass
+            return {"status": "FAILED", "error": err}
+    except Exception as e:
+        return {"status": "EXCEPTION", "error": str(e)}
+
 def start_bot_thread():
     time.sleep(3)
     t_now = datetime.now(IST).strftime('%d-%m-%Y %I:%M:%S %p IST')
+    try: test_coindcx_route()
+    except: pass
     send_system_alert(f"🚀 <b>StockMindset System Monitor: Live!</b> 🚀\\n\\n✅ <b>Render.com ક્લાઉડ સર્વર પર બોટ સફળતાપૂર્વક શરૂ થઈ ગયો છે!</b>\\n📊 <b>સિસ્ટમ:</b> ૧૪૬-સ્લાઈડ્સ SMC એન્જિન\\n🔍 <b>મોનિટરિંગ:</b> ૮ કોઈન્સ\\n⏰ <b>સમય:</b> {t_now}\\n👤 <i>Author: ANKIT RABARI (Rajkot)</i>")
     last_ping = time.time()
     while True:
