@@ -30,8 +30,8 @@ RISK_PER_TRADE_PERCENT = 1.0# ટ્રેડ દીઠ 1% રિસ્ક
 
 # ભવિષ્યમાં CoinDCX માં લાઈવ ટ્રેડ કરવા માટે:
 LIVE_TRADING = True        # જ્યારે અસલી ઓર્ડર મુકવા હોય ત્યારે True કરવું
-COINDCX_API_KEY = "65f045449b7822403d277a39ee93fb9ce4e973883709a062"
-COINDCX_SECRET_KEY = "17217d4a50946a171f6ab075e5d11b3972c5149a2c66c9a9e3d87d409c6f012b"
+COINDCX_API_KEY = "904f9c44faf2c65159eccf037c9bed63f672ad56092e9da3"
+COINDCX_SECRET_KEY = "a9ca8ebdaef96f50843e0211feb5205025f5a1bc2983cca4491212fd4d33cf71"
 
 # રિયલ મની લાઈવ ટ્રેડિંગ ટેલિગ્રામ બોટ (@stockmindset_real_bot)
 REAL_TELEGRAM_BOT_TOKEN = "9151662883:AAHB4UPLWysHgzqa84J8fN2Lg8PFvqjXG_c"
