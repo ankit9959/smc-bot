@@ -9,6 +9,8 @@ import time
 import requests
 import json
 import os
+import hmac
+import hashlib
 from datetime import datetime
 
 try:
