@@ -1,5 +1,6 @@
 """
 ==============================================================================
+#                SMC MASTER ENGINE & LIVE RUNNER (ALL 146 SLIDES)
            Complete 15-Hour SMC Course Implementation (Trade With Ani)
 ==============================================================================
 """
@@ -9,6 +10,12 @@ import requests
 import json
 import os
 from datetime import datetime
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 # ==============================================================================
 #                               CONFIGURATION
@@ -22,12 +29,25 @@ WATCHLIST = [
 ]
 TIMEFRAME = "15m"
 SCAN_INTERVAL_SECONDS = 30
+MIN_RISK_REWARD = 2.0
+
+# CoinDCX Real Money Live Trading Settings (Ankit Rabari)
+LIVE_TRADING = True
+COINDCX_API_KEY = "65f045449b7822403d277a39ee93fb9ce4e973883709a062"
+COINDCX_SECRET_KEY = "17217d4a50946a171f6ab075e5d11b3972c5149a2c66c9a9e3d87d409c6f012b"
+
+
+# Alert Tracking to Prevent Spam (15-Minute Cooldown per Setup)
 alerted_trades = {}
-COOLDOWN_SECONDS = 900
-
-from PIL import Image, ImageDraw
+COOLDOWN_SECONDS = 900  # 15 minutes (1 candle duration)
 
 
+# ==============================================================================
+#                 STOCKMINDSET TARGET, SL & AUTO-JOURNAL ENGINE
+# ==============================================================================
+# ==============================================================================
+#                 STOCKMINDSET TARGET, SL & AUTO-JOURNAL ENGINE
+# ==============================================================================
 # --- STOCKMINDSET 100% PERFECT TRACKER & JOURNAL ---
 ACTIVE_TRADES_FILE = "active_trades.json"
 JOURNAL_FILE = "trade_journal.json"
@@ -152,8 +172,9 @@ def check_active_trade_outcomes(sym, last_candle):
         print(f"--> [TARGET HIT ALERT SENT] for {clean} at ${target}!")
         record_journal_entry(clean, act, entry, target, "TARGET HIT 🎯", f"+{rrr} R", "WIN", d_now, t_now)
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
-        try: on_live_trade_closed(clean, outcome)
-        except: pass
+        try:
+            on_live_trade_closed(clean, outcome)
+        except Exception: pass
 
     elif outcome == "SL_HIT":
         if stage == "TRAILED_3R":
@@ -170,8 +191,9 @@ def check_active_trade_outcomes(sym, last_candle):
             send_telegram_alert(msg)
             record_journal_entry(clean, act, entry, sl, "STOP LOSS 🛑", "-1.00 R", "LOSS", d_now, t_now)
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
-        try: on_live_trade_closed(clean, outcome)
-        except: pass
+        try:
+            on_live_trade_closed(clean, outcome)
+        except Exception: pass
 
 def record_journal_entry(sym, act, entry, exit_p, result, rrr, status, d_now, t_now):
     journal = load_json_data(JOURNAL_FILE, [])
@@ -213,62 +235,126 @@ def update_html_journal(journal):
 def format_price(p):
     try:
         p = float(p)
-        return f"{p:.2f}" if p >= 100 else (f"{p:.4f}" if p >= 1 else f"{p:.6f}")
-    except:
+        if p >= 100:
+            return f"{p:.2f}"
+        elif p >= 1:
+            return f"{p:.4f}"
+        else:
+            return f"{p:.6f}"
+    except Exception:
         return str(p)
 
 def draw_smc_chart(symbol, timeframe, candles, setup=None, output_path="chart.png"):
+    if not HAS_PIL:
+        return None
     try:
-        w, h = 900, 550
-        img = Image.new("RGB", (w, h), color="#131722")
+        width = 900
+        height = 550
+        margin_top = 70
+        margin_bottom = 50
+        margin_left = 60
+        margin_right = 110
+        
+        img = Image.new("RGB", (width, height), color="#131722")
         draw = ImageDraw.Draw(img)
-        plot_c = candles[-40:]
-        n = len(plot_c)
+        
+        plot_candles = candles[-40:]
+        n = len(plot_candles)
         if n == 0: return None
-        highs = [float(c["high"]) for c in plot_c]
-        lows = [float(c["low"]) for c in plot_c]
+        
+        highs = [float(c["high"]) for c in plot_candles]
+        lows = [float(c["low"]) for c in plot_candles]
         if setup:
-            if "sl" in setup: lows.append(float(setup["sl"])); highs.append(float(setup["sl"]))
-            if "target" in setup: highs.append(float(setup["target"])); lows.append(float(setup["target"]))
-        min_p, max_p = min(lows), max(highs)
-        p_range = max(1e-6, max_p - min_p)
-        chart_h, chart_w = h - 120, w - 170
-        def p2y(p): return 70 + chart_h - int(((float(p) - min_p) / p_range) * chart_h)
-        cw = max(4, int(chart_w / (n * 1.5)))
-        sp = int(chart_w / n)
+            if "sl" in setup:
+                lows.append(float(setup["sl"]))
+                highs.append(float(setup["sl"]))
+            if "target" in setup:
+                highs.append(float(setup["target"]))
+                lows.append(float(setup["target"]))
+                
+        min_p = min(lows)
+        max_p = max(highs)
+        p_range = max_p - min_p if max_p > min_p else 1.0
+        
+        chart_h = height - margin_top - margin_bottom
+        chart_w = width - margin_left - margin_right
+        
+        def price_to_y(price):
+            return margin_top + chart_h - int(((float(price) - min_p) / p_range) * chart_h)
+            
+        candle_w = max(4, int(chart_w / (n * 1.5)))
+        spacing = int(chart_w / n)
+        
+        # Grid lines & price labels
         for i in range(6):
-            gp = min_p + (p_range / 5.0) * i
-            gy = p2y(gp)
-            draw.line([(60, gy), (w - 110, gy)], fill="#202430", width=1)
-            draw.text((w - 100, gy - 6), format_price(gp), fill="#787b86")
-        for idx, c in enumerate(plot_c):
-            cx = 60 + idx * sp + (sp // 2)
-            oy, cy, hy, ly = p2y(c["open"]), p2y(c["close"]), p2y(c["high"]), p2y(c["low"])
-            col = "#089981" if float(c["close"]) >= float(c["open"]) else "#f23645"
-            draw.line([(cx, hy), (cx, ly)], fill=col, width=1)
-            t_y, b_y = min(oy, cy), max(oy, cy)
-            if b_y - t_y < 2: b_y = t_y + 2
-            draw.rectangle([(cx - cw // 2, t_y), (cx + cw // 2, b_y)], fill=col, outline=col)
+            grid_p = min_p + (p_range / 5.0) * i
+            gy = price_to_y(grid_p)
+            draw.line([(margin_left, gy), (width - margin_right, gy)], fill="#202430", width=1)
+            draw.text((width - margin_right + 8, gy - 6), format_price(grid_p), fill="#787b86")
+            
+        # OB Box
+        if setup and "ob" in setup and setup["ob"]:
+            ob = setup["ob"]
+            ob_top_y = price_to_y(ob.get("high", max_p))
+            ob_bot_y = price_to_y(ob.get("low", min_p))
+            fill_color = "#123828" if "BULLISH" in str(ob.get("type", "")) else "#38191d"
+            out_color = "#00b06f" if "BULLISH" in str(ob.get("type", "")) else "#f23645"
+            draw.rectangle([(margin_left + 40, min(ob_top_y, ob_bot_y)), (width - margin_right - 20, max(ob_top_y, ob_bot_y))], fill=fill_color, outline=out_color, width=2)
+            draw.text((margin_left + 50, min(ob_top_y, ob_bot_y) + 4), f"VALID {ob.get('type', 'OB')} ZONE", fill=out_color)
+            
+        # FVG Box & 50% CE
+        if setup and "fvg" in setup and setup["fvg"]:
+            fvg = setup["fvg"]
+            fvg_top_y = price_to_y(fvg.get("top", max_p))
+            fvg_bot_y = price_to_y(fvg.get("bottom", min_p))
+            ce_y = price_to_y(fvg.get("ce", (fvg.get("top", max_p) + fvg.get("bottom", min_p)) / 2.0))
+            draw.rectangle([(margin_left + 80, min(fvg_top_y, fvg_bot_y)), (width - margin_right - 40, max(fvg_top_y, fvg_bot_y))], fill="#2b2818", outline="#f0b90b", width=1)
+            draw.line([(margin_left + 80, ce_y), (width - margin_right - 40, ce_y)], fill="#f0b90b", width=1)
+            draw.text((margin_left + 90, min(fvg_top_y, fvg_bot_y) + 2), "FVG 50% CE LEVEL", fill="#f0b90b")
+            
+        # Candlesticks
+        for idx, c in enumerate(plot_candles):
+            cx = margin_left + idx * spacing + (spacing // 2)
+            oy = price_to_y(c["open"])
+            cy = price_to_y(c["close"])
+            hy = price_to_y(c["high"])
+            ly = price_to_y(c["low"])
+            
+            color = "#089981" if float(c["close"]) >= float(c["open"]) else "#f23645"
+            draw.line([(cx, hy), (cx, ly)], fill=color, width=1)
+            top_y = min(oy, cy)
+            bot_y = max(oy, cy)
+            if bot_y - top_y < 2:
+                bot_y = top_y + 2
+            draw.rectangle([(cx - candle_w // 2, top_y), (cx + candle_w // 2, bot_y)], fill=color, outline=color)
+            
+        # Trade lines (Entry, SL, TP)
         if setup:
-            ey, sy, ty = p2y(setup["entry"]), p2y(setup["sl"]), p2y(setup["target"])
-            draw.line([(60, ey), (w - 110, ey)], fill="#2962ff", width=2)
-            draw.text((w - 250, ey - 14), f"ENTRY: ${format_price(setup['entry'])}", fill="#2962ff")
-            draw.line([(60, sy), (w - 110, sy)], fill="#f23645", width=2)
-            draw.text((w - 250, sy - 14), f"STOP LOSS: ${format_price(setup['sl'])}", fill="#f23645")
-            draw.line([(60, ty), (w - 110, ty)], fill="#089981", width=2)
-            draw.text((w - 250, ty - 14), f"TARGET: ${format_price(setup['target'])}", fill="#089981")
-        draw.text((60, 15), f"StockMindset SMC: {symbol} ({timeframe})", fill="#ffffff")
+            ey = price_to_y(setup["entry"])
+            sy = price_to_y(setup["sl"])
+            ty = price_to_y(setup["target"])
+            
+            draw.line([(margin_left, ey), (width - margin_right, ey)], fill="#2962ff", width=2)
+            draw.text((width - margin_right - 230, ey - 14), f"ENTRY: ${format_price(setup['entry'])}", fill="#2962ff")
+            
+            draw.line([(margin_left, sy), (width - margin_right, sy)], fill="#f23645", width=2)
+            draw.text((width - margin_right - 230, sy - 14), f"STOP LOSS: ${format_price(setup['sl'])}", fill="#f23645")
+            
+            draw.line([(margin_left, ty), (width - margin_right, ty)], fill="#089981", width=2)
+            draw.text((width - margin_right - 230, ty - 14), f"TARGET: ${format_price(setup['target'])}", fill="#089981")
+            
+        header_text = f"StockMindset SMC Setup: {symbol} ({timeframe})"
+        draw.text((margin_left, 15), header_text, fill="#ffffff")
+        if setup:
+            pattern = setup.get("setup_name") or setup.get("reason") or "SMC Setup"
+            sub_text = f"Action: {setup['action']} | Pattern: {pattern} | RRR: 1:{setup.get('rrr', '2.0')}"
+            draw.text((margin_left, 38), sub_text, fill="#00b06f" if "LONG" in setup["action"] else "#f23645")
+            
         img.save(output_path)
         return output_path
     except Exception as err:
+        print(f"Chart render exception: {err}")
         return None
-
-MIN_RISK_REWARD = 2.0
-
-LIVE_TRADING = True
-COINDCX_API_KEY = "65f045449b7822403d277a39ee93fb9ce4e973883709a062"
-COINDCX_SECRET_KEY = "17217d4a50946a171f6ab075e5d11b3972c5149a2c66c9a9e3d87d409c6f012b"
-
 
 # ==============================================================================
 #                       TELEGRAM ALERTS DISPATCHER
@@ -502,23 +588,34 @@ def find_order_blocks(candles, fvgs, eq_level):
     return obs
 
 # ==============================================================================
+#      PHASE 4: EXTENDED MARKET STRUCTURE & MACRO TREND (SLIDES 80-98 & 43)
+# ==============================================================================
+# ==============================================================================
 #            PHASE 4: MARKET STRUCTURE (SLIDES 80-98) & TREND
 # ==============================================================================
 def is_valid_pullback(c_curr, c_prev, trend):
-    if c_curr["high"] <= c_prev["high"] and c_curr["low"] >= c_prev["low"]: return False
+    """Slide 61-68: Valid vs Invalid Pullback & Inside Bar Filter"""
+    if c_curr["high"] <= c_prev["high"] and c_curr["low"] >= c_prev["low"]:
+        return False # Inside bar is not a valid pullback
     if trend == "BULLISH": return c_curr["low"] < c_prev["low"]
     elif trend == "BEARISH": return c_curr["high"] > c_prev["high"]
     return False
 
 def analyze_market_structure(candles):
+    """
+    TRUE 146-SLIDE MARKET STRUCTURE: SWINGS, BOS & CHOCH (Slides 80 to 98)
+    Detects Major Swing Highs & Lows, Candle Close BOS, and Trend-Reversal CHoCH.
+    """
     n = len(candles)
     if n < 15: return {"trend": "SIDEWAYS", "recent_high": candles[-1]["high"], "recent_low": candles[-1]["low"], "choch": None, "idm_swept": False}
     min_bars = 4
     swing_highs, swing_lows = [], []
     for i in range(min_bars, n - min_bars):
         c = candles[i]
-        if all(c["high"] >= candles[i - j]["high"] for j in range(1, min_bars + 1)) and all(c["high"] >= candles[i + j]["high"] for j in range(1, min_bars + 1)): swing_highs.append((i, c["high"]))
-        if all(c["low"] <= candles[i - j]["low"] for j in range(1, min_bars + 1)) and all(c["low"] <= candles[i + j]["low"] for j in range(1, min_bars + 1)): swing_lows.append((i, c["low"]))
+        if all(c["high"] >= candles[i - j]["high"] for j in range(1, min_bars + 1)) and all(c["high"] >= candles[i + j]["high"] for j in range(1, min_bars + 1)):
+            swing_highs.append((i, c["high"]))
+        if all(c["low"] <= candles[i - j]["low"] for j in range(1, min_bars + 1)) and all(c["low"] <= candles[i + j]["low"] for j in range(1, min_bars + 1)):
+            swing_lows.append((i, c["low"]))
     curr_trend = "BULLISH" if candles[n // 2]["close"] >= candles[0]["close"] else "BEARISH"
     choch_event, last_bos = None, None
     for k in range(min_bars + 1, n):
@@ -654,14 +751,20 @@ def scan_symbol_for_smc_setup(symbol, candles):
     return None
 
 
+# ==============================================================================
+#            STOCKMINDSET - COINDCX REAL MONEY LIVE AUTO-TRADER
+#                      Author: ANKIT RABARI (Rajkot, Gujarat)
+# ==============================================================================
 COINDCX_BASE_URL = "https://api.coindcx.com"
 LIVE_LOG_FILE = "live_trades_log.json"
+
+# Strict Risk Parameters set by Ankit Rabari
 TOTAL_CAPITAL_INR = 1000.0
-RISK_PERCENT = 3.0
-RISK_AMOUNT_INR = TOTAL_CAPITAL_INR * (RISK_PERCENT / 100.0)
-MAX_DAILY_TRADES = 2
-MAX_ACTIVE_TRADES = 1
-USDT_INR_RATE = 88.0
+RISK_PERCENT = 3.0          # Strictly 3% risk = ₹30 per trade!
+RISK_AMOUNT_INR = TOTAL_CAPITAL_INR * (RISK_PERCENT / 100.0) # ₹30.0
+MAX_DAILY_TRADES = 2        # Exactly 2 trades per day max
+MAX_ACTIVE_TRADES = 1       # Exactly 1 active trade at a time
+USDT_INR_RATE = 88.0        # 1 USDT = ~88 INR
 
 def get_coindcx_signature(secret, body_json):
     return hmac.new(secret.encode("utf-8"), body_json.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -669,16 +772,26 @@ def get_coindcx_signature(secret, body_json):
 def coindcx_private_request(endpoint, payload_dict):
     api_k = COINDCX_API_KEY or os.environ.get("COINDCX_API_KEY", "")
     sec_k = COINDCX_SECRET_KEY or os.environ.get("COINDCX_SECRET_KEY", "")
-    if not api_k or not sec_k: return {"error": "API Key missing"}
+    if not api_k or not sec_k:
+        return {"error": "API Key or Secret Key missing"}
     url = f"{COINDCX_BASE_URL}{endpoint}"
     payload_json = json.dumps(payload_dict, separators=(',', ':'))
     sig = get_coindcx_signature(sec_k, payload_json)
-    headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": api_k, "X-AUTH-SIGNATURE": sig, "User-Agent": "StockMindset/1.0"}
+    headers = {
+        "Content-Type": "application/json",
+        "X-AUTH-APIKEY": api_k,
+        "X-AUTH-SIGNATURE": sig,
+        "User-Agent": "StockMindset-Bot/1.0"
+    }
     try:
         req = urllib.request.Request(url, data=payload_json.encode("utf-8"), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except Exception as e: return {"error": str(e)}
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8")
+        return {"error": f"HTTP {e.code}: {err_msg}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 def load_live_log():
     if not os.path.exists(LIVE_LOG_FILE): return {"trades": [], "active": None}
@@ -697,7 +810,8 @@ def get_today_live_trades_count():
     return sum(1 for t in data.get("trades", []) if t.get("date") == today_str)
 
 def has_active_live_trade():
-    return load_live_log().get("active") is not None
+    data = load_live_log()
+    return data.get("active") is not None
 
 def calculate_lot_size(symbol, entry_price, sl_price):
     price_diff = abs(entry_price - sl_price)
@@ -716,34 +830,170 @@ def calculate_lot_size(symbol, entry_price, sl_price):
 
 REAL_TELEGRAM_BOT_TOKEN = "9151662883:AAHB4UPLWysHgzqa84J8fN2Lg8PFvqjXG_c"
 REAL_TELEGRAM_CHAT_ID = "8611777710"
+
 def send_real_telegram_alert(msg):
     try:
         url = f"https://api.telegram.org/bot{REAL_TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": REAL_TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=5)
-    except: pass
+        payload = {"chat_id": REAL_TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print("[REAL BOT ALERT ERROR]:", e)
 
 def execute_real_smc_trade(setup):
-    if not LIVE_TRADING or not COINDCX_API_KEY: return False
-    today_count = get_today_live_trades_count()
-    if today_count >= MAX_DAILY_TRADES: return False
-    if has_active_live_trade(): return False
+    if not getattr(config, "LIVE_TRADING", False):
+        return False
 
-    sym, act, entry, sl, target = setup["symbol"], setup["action"], setup["entry"], setup["sl"], setup["target"]
+    api_k = COINDCX_API_KEY or os.environ.get("COINDCX_API_KEY", "")
+    sec_k = COINDCX_SECRET_KEY or os.environ.get("COINDCX_SECRET_KEY", "")
+    if not api_k or not sec_k:
+        print("[LIVE TRADER] API keys missing in config. Skipping.")
+        return False
+
+    today_count = get_today_live_trades_count()
+    if today_count >= MAX_DAILY_TRADES:
+        print(f"[LIVE TRADER] Daily trade limit reached ({today_count}/{MAX_DAILY_TRADES}). Skipping.")
+        return False
+
+    if has_active_live_trade():
+        print("[LIVE TRADER] One active live trade is already running. Skipping to honor 1-active rule.")
+        return False
+
+    sym = setup.get("symbol")
+    act = setup.get("action")
+    entry = setup.get("entry")
+    sl = setup.get("sl")
+    target = setup.get("target")
+    rrr = setup.get("rrr", "2.0")
+
     qty = calculate_lot_size(sym, entry, sl)
     if qty <= 0: return False
 
     side = "buy" if act == "LONG" else "sell"
     pair = f"B-{sym.replace('USDT', '')}_USDT"
-    order_payload = {"side": side, "pair": pair, "order_type": "market_order", "total_quantity": qty, "leverage": 3.0, "timestamp": int(time.time() * 1000)}
-    res = coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", order_payload)
-    if "error" in res or res.get("status") in ["rejected", "error"]: return False
 
-    t_now, d_now = datetime.now().strftime("%H:%M:%S"), datetime.now().strftime("%Y-%m-%d")
-    trade_data = {"coin": sym, "pair": pair, "action": act, "qty": qty, "entry": entry, "sl": sl, "target": target, "risk_inr": RISK_AMOUNT_INR, "date": d_now, "time": t_now, "order_id": res.get("id", "N/A")}
+    order_payload = {
+        "side": side,
+        "pair": pair,
+        "order_type": "market_order",
+        "total_quantity": qty,
+        "leverage": 3.0,
+        "timestamp": int(time.time() * 1000)
+    }
+
+    print(f"--> [COINDCX LIVE REAL ORDER] Submitting {act} for {qty} {sym} (Risk: ₹{RISK_AMOUNT_INR})...")
+    res = coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", order_payload)
+
+    if "error" in res or res.get("status") in ["rejected", "error"]:
+        err = res.get("error") or res.get("message") or "Unknown error"
+        print(f"--> [COINDCX ORDER ERROR] {err}")
+        return False
+
+    t_now = datetime.now().strftime("%H:%M:%S")
+    d_now = datetime.now().strftime("%Y-%m-%d")
+    trade_data = {
+        "coin": sym, "pair": pair, "action": act, "qty": qty,
+        "entry": entry, "sl": sl, "initial_sl": sl, "target": target,
+        "rrr": rrr, "risk_inr": RISK_AMOUNT_INR, "stage": "INITIAL",
+        "date": d_now, "time": t_now, "order_id": res.get("id", "N/A")
+    }
     data = load_live_log()
     data["active"] = trade_data
     save_live_log(data)
 
     act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
-    act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
-    msg = ("🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀\n\n" + "• <b>Coin:</b> " + str(sym) + "\n" + "• <b>Action:</b> " + str(act_name) + "\n" + "• <b>Quantity:</b> " + str(qty) + "\n" + "• <b>Entry:</b> $" + str(entry) + "\n" + "• <b>Stop Loss:</b> $" + str(sl) + "\n" + "• <b>Target:</b> $" + str(target) + "\n" + "• <b>Max Risk:</b> ₹" + str(RISK_AMOUNT_INR) + " (Strictly 3%)\n" + "• <b>Today Trade Count:</b> " + str(today_count + 1) + "/" + str(MAX_DAILY_TRADES) + "\n" + "⏰ <b>Time:</b> " + str(t_now))
+    msg = ("🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀\n\n"
+           + "• <b>Coin:</b> " + str(sym) + "\n"
+           + "• <b>Action:</b> " + str(act_name) + "\n"
+           + "• <b>Quantity:</b> " + str(qty) + "\n"
+           + "• <b>Entry:</b> $" + str(entry) + "\n"
+           + "• <b>Stop Loss:</b> $" + str(sl) + "\n"
+           + "• <b>Target:</b> $" + str(target) + "\n"
+           + "• <b>Max Risk:</b> ₹" + str(RISK_AMOUNT_INR) + " (Strictly 3%)\n"
+           + "• <b>Today Trade Count:</b> " + str(today_count + 1) + "/" + str(MAX_DAILY_TRADES) + "\n"
+           + "⏰ <b>Time:</b> " + str(t_now))
+    try:
+        send_real_telegram_alert(msg)
+        send_telegram_alert(msg)
+    except: pass
+    return True
+
+def on_live_trade_closed(sym, outcome):
+    data = load_live_log()
+    active = data.get("active")
+    if not active: return
+    if active.get("coin") == sym or sym in active.get("coin", ""):
+        t_now = datetime.now().strftime("%H:%M:%S")
+        active["closed_time"] = t_now
+        active["outcome"] = outcome
+        data["trades"].append(active)
+        data["active"] = None
+        save_live_log(data)
+        print(f"--> [COINDCX LIVE TRADE ARCHIVED] {sym} closed with outcome {outcome}")
+        outcome_msg = ("🏁 <b>REAL TRADE COMPLETED: " + str(sym) + "</b> 🏁\n\n"
+                       + "• <b>Result:</b> " + str(outcome) + "\n"
+                       + "• <b>Exit Time:</b> " + str(t_now) + "\n"
+                       + "• <b>Status:</b> Ready for Next Setup (Max 1 Active Rule)")
+        try: send_real_telegram_alert(outcome_msg)
+        except: pass
+
+def run_master_scan_pass():
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Scan Across {len(WATCHLIST)} Coins...")
+    current_ts = time.time()
+    for sym in WATCHLIST:
+        try:
+            candles = get_coindcx_candles(sym, interval=TIMEFRAME, limit=60)
+            if not candles: continue
+            try: check_active_trade_outcomes(sym, candles[-1])
+            except: pass
+            setup = scan_symbol_for_smc_setup(sym, candles)
+            if setup:
+                alert_key = f"{sym}_{setup['action']}_{setup.get('setup_name')}"
+                if alert_key in alerted_trades and (current_ts - alerted_trades[alert_key] < COOLDOWN_SECONDS):
+                    continue
+                alerted_trades[alert_key] = current_ts
+                print(f"--> Found Valid SMC Trade on {sym}: {setup['action']} ({setup.get('setup_name')})")
+                register_active_trade(sym, setup)
+                try:
+                    execute_real_smc_trade(setup)
+                except Exception as _e:
+                    print("[COINDCX LIVE HOOK ERROR]:", _e)
+                action_emoji = "🟢 LONG" if setup['action'] == 'LONG' else "🔴 SHORT"
+                entry_f, sl_f, target_f, rrr_f = format_price(setup['entry']), format_price(setup['sl']), format_price(setup['target']), str(setup.get('rrr', '2.0'))
+                msg = (f"🎯 <b>NEW SMC INSTITUTIONAL SETUP: {sym}</b> 🎯\n\n• <b>Action:</b> {action_emoji}\n• <b>Trend:</b> {setup['trend']} (Slide 43)\n• <b>Pattern:</b> {setup.get('setup_name')}\n• <b>Source:</b> {setup.get('slide')}\n\n🔹 <b>Entry:</b> ${entry_f}\n🛑 <b>Stop Loss:</b> ${sl_f}\n🏁 <b>Target:</b> ${target_f}\n⚖️ <b>Risk:Reward:</b> 1:{rrr_f}\n\n🛡️ <b>Verified Filters:</b>\n  ✔️ Slide 40: Fresh Unmitigated Zone\n  ✔️ Slide 43: Go With Trend\n  ✔️ Slide 59: Liquidity Swept\n  ✔️ Slide 29: Reversal Candle Confirmed\n\n⏰ <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}")
+                photo_file, photo_sent = f"chart_{sym}.png", False
+                try:
+                    generated_chart = draw_smc_chart(sym, TIMEFRAME, candles, setup=setup, output_path=photo_file)
+                    if generated_chart and os.path.exists(generated_chart):
+                        send_telegram_alert(msg, photo_path=generated_chart)
+                        photo_sent = True
+                        print(f"--> Telegram Alert with Photo sent for {sym}!")
+                except Exception as p_err: print(f"Photo error {sym}: {p_err}")
+                if not photo_sent:
+                    send_telegram_alert(msg)
+                    print(f"--> Telegram Text Alert sent for {sym}!")
+
+        except Exception as e:
+            print(f"Error scanning {sym}: {e}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Scan pass completed.")
+
+if __name__ == "__main__":
+    welcome = (
+        "🚀 <b>SMC + IOC MASTER TRADING SYSTEM LIVE!</b> 🚀\n\n"
+        "• <b>Authoritative Source:</b> Trade With Ani (15-Hour Course)\n"
+        "• <b>Total Scope:</b> All 146 PPT Slides Fully Encoded\n"
+        "• <b>Active Coins:</b> " + ", ".join(WATCHLIST) + "\n"
+        "• <b>Timeframe:</b> " + TIMEFRAME + "\n\n"
+        "તમામ ૧૪૬ સ્લાઇડ્સ અને વિડીયો નિયમો મુજબ લાઈવ સ્કેનર શરૂ થઈ ગયું છે!"
+    )
+    send_telegram_alert(welcome)
+    print('SMC Bot is running in continuous loop. Press CTRL+C to stop.')
+    while True:
+        try:
+            run_master_scan_pass()
+            time.sleep(SCAN_INTERVAL_SECONDS)
+        except KeyboardInterrupt:
+            print('Bot stopped by user.')
+            break
+        except Exception as e:
+            print(f'Loop Error: {e}')
+            time.sleep(10)
