@@ -38,8 +38,8 @@ MIN_RISK_REWARD = 2.0
 
 # CoinDCX Real Money Live Trading Settings (Ankit Rabari)
 LIVE_TRADING = True
-COINDCX_API_KEY = "1a2c3238bbb266a9ee68ccb51b6b2ece7de4decd58b6da63"
-COINDCX_SECRET_KEY = "45c80b1c770ba740a819b51eee783238eb2dae798bd06f7e73c32111226759b1"
+COINDCX_API_KEY = "815eace59991bb09e930e3bb5c31f714b12007221dfb9118"
+COINDCX_SECRET_KEY = "9cf9b4528c9485ddaaea0a5e9d654a17d64cac2dbdd9c805c8d6580c4bd87ea3"
 
 
 # Alert Tracking to Prevent Spam (15-Minute Cooldown per Setup)
@@ -993,6 +993,6 @@ if __name__ == "__main__":
             print(f'Loop Error: {e}')
             time.sleep(10)
 
-COINDCX_API_KEY = "1a2c3238bbb266a9ee68ccb51b6b2ece7de4decd58b6da63"
-COINDCX_SECRET_KEY = "45c80b1c770ba740a819b51eee783238eb2dae798bd06f7e73c32111226759b1"
+COINDCX_API_KEY = "815eace59991bb09e930e3bb5c31f714b12007221dfb9118"
+COINDCX_SECRET_KEY = "9cf9b4528c9485ddaaea0a5e9d654a17d64cac2dbdd9c805c8d6580c4bd87ea3"
 LIVE_TRADING = True
