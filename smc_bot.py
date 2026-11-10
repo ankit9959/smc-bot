@@ -152,6 +152,8 @@ def check_active_trade_outcomes(sym, last_candle):
         print(f"--> [TARGET HIT ALERT SENT] for {clean} at ${target}!")
         record_journal_entry(clean, act, entry, target, "TARGET HIT 🎯", f"+{rrr} R", "WIN", d_now, t_now)
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
+        try: on_live_trade_closed(clean, outcome)
+        except: pass
 
     elif outcome == "SL_HIT":
         if stage == "TRAILED_3R":
@@ -168,6 +170,8 @@ def check_active_trade_outcomes(sym, last_candle):
             send_telegram_alert(msg)
             record_journal_entry(clean, act, entry, sl, "STOP LOSS 🛑", "-1.00 R", "LOSS", d_now, t_now)
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
+        try: on_live_trade_closed(clean, outcome)
+        except: pass
 
 def record_journal_entry(sym, act, entry, exit_p, result, rrr, status, d_now, t_now):
     journal = load_json_data(JOURNAL_FILE, [])
@@ -260,6 +264,11 @@ def draw_smc_chart(symbol, timeframe, candles, setup=None, output_path="chart.pn
         return None
 
 MIN_RISK_REWARD = 2.0
+
+LIVE_TRADING = True
+COINDCX_API_KEY = "65f045449b7822403d277a39ee93fb9ce4e973883709a062"
+COINDCX_SECRET_KEY = "17217d4a50946a171f6ab075e5d11b3972c5149a2c66c9a9e3d87d409c6f012b"
+
 
 # ==============================================================================
 #                       TELEGRAM ALERTS DISPATCHER
@@ -644,6 +653,115 @@ def scan_symbol_for_smc_setup(symbol, candles):
 
     return None
 
+
+COINDCX_BASE_URL = "https://api.coindcx.com"
+LIVE_LOG_FILE = "live_trades_log.json"
+TOTAL_CAPITAL_INR = 1000.0
+RISK_PERCENT = 3.0
+RISK_AMOUNT_INR = TOTAL_CAPITAL_INR * (RISK_PERCENT / 100.0)
+MAX_DAILY_TRADES = 2
+MAX_ACTIVE_TRADES = 1
+USDT_INR_RATE = 88.0
+
+def get_coindcx_signature(secret, body_json):
+    return hmac.new(secret.encode("utf-8"), body_json.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def coindcx_private_request(endpoint, payload_dict):
+    api_k = COINDCX_API_KEY or os.environ.get("COINDCX_API_KEY", "")
+    sec_k = COINDCX_SECRET_KEY or os.environ.get("COINDCX_SECRET_KEY", "")
+    if not api_k or not sec_k: return {"error": "API Key missing"}
+    url = f"{COINDCX_BASE_URL}{endpoint}"
+    payload_json = json.dumps(payload_dict, separators=(',', ':'))
+    sig = get_coindcx_signature(sec_k, payload_json)
+    headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": api_k, "X-AUTH-SIGNATURE": sig, "User-Agent": "StockMindset/1.0"}
+    try:
+        req = urllib.request.Request(url, data=payload_json.encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e: return {"error": str(e)}
+
+def load_live_log():
+    if not os.path.exists(LIVE_LOG_FILE): return {"trades": [], "active": None}
+    try:
+        with open(LIVE_LOG_FILE, "r") as f: return json.load(f)
+    except: return {"trades": [], "active": None}
+
+def save_live_log(data):
+    try:
+        with open(LIVE_LOG_FILE, "w") as f: json.dump(data, f, indent=2)
+    except: pass
+
+def get_today_live_trades_count():
+    data = load_live_log()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    return sum(1 for t in data.get("trades", []) if t.get("date") == today_str)
+
+def has_active_live_trade():
+    return load_live_log().get("active") is not None
+
+def calculate_lot_size(symbol, entry_price, sl_price):
+    price_diff = abs(entry_price - sl_price)
+    if price_diff <= 0: return 0.0
+    risk_usdt = RISK_AMOUNT_INR / USDT_INR_RATE
+    raw_qty = risk_usdt / price_diff
+    if "BTC" in symbol: qty = round(max(0.001, raw_qty), 3)
+    elif "ETH" in symbol: qty = round(max(0.01, raw_qty), 2)
+    elif "SOL" in symbol: qty = round(max(0.1, raw_qty), 1)
+    elif "BNB" in symbol: qty = round(max(0.01, raw_qty), 2)
+    elif "NEAR" in symbol: qty = round(max(0.5, raw_qty), 1)
+    elif "DOGE" in symbol: qty = round(max(10.0, raw_qty), 0)
+    else: qty = round(max(0.1, raw_qty), 2)
+    return qty
+
+def execute_real_smc_trade(setup):
+    if not LIVE_TRADING or not COINDCX_API_KEY: return False
+    today_count = get_today_live_trades_count()
+    if today_count >= MAX_DAILY_TRADES: return False
+    if has_active_live_trade(): return False
+
+    sym, act, entry, sl, target = setup["symbol"], setup["action"], setup["entry"], setup["sl"], setup["target"]
+    qty = calculate_lot_size(sym, entry, sl)
+    if qty <= 0: return False
+
+    side = "buy" if act == "LONG" else "sell"
+    pair = f"B-{sym.replace('USDT', '')}_USDT"
+    order_payload = {"side": side, "pair": pair, "order_type": "market_order", "total_quantity": qty, "leverage": 3.0, "timestamp": int(time.time() * 1000)}
+    res = coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", order_payload)
+    if "error" in res or res.get("status") in ["rejected", "error"]: return False
+
+    t_now, d_now = datetime.now().strftime("%H:%M:%S"), datetime.now().strftime("%Y-%m-%d")
+    trade_data = {"coin": sym, "pair": pair, "action": act, "qty": qty, "entry": entry, "sl": sl, "target": target, "risk_inr": RISK_AMOUNT_INR, "date": d_now, "time": t_now, "order_id": res.get("id", "N/A")}
+    data = load_live_log()
+    data["active"] = trade_data
+    save_live_log(data)
+
+    msg = f"🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀
+
+• <b>Coin:</b> {sym}
+• <b>Action:</b> {'🟢 BUY / LONG' if act == 'LONG' else '🔴 SELL / SHORT'}
+• <b>Quantity:</b> {qty}
+• <b>Entry:</b> ${entry}
+• <b>Stop Loss:</b> ${sl}
+• <b>Target:</b> ${target}
+• <b>Max Risk:</b> ₹{RISK_AMOUNT_INR} (Strictly 3%)
+• <b>Today Trade Count:</b> {today_count + 1}/{MAX_DAILY_TRADES}
+⏰ <b>Time:</b> {t_now}"
+    try: send_telegram_alert(msg)
+    except: pass
+    return True
+
+def on_live_trade_closed(sym, outcome):
+    data = load_live_log()
+    active = data.get("active")
+    if not active: return
+    if active.get("coin") == sym or sym in active.get("coin", ""):
+        active["closed_time"] = datetime.now().strftime("%H:%M:%S")
+        active["outcome"] = outcome
+        data["trades"].append(active)
+        data["active"] = None
+        save_live_log(data)
+
+
 def run_master_scan_pass():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Scan Across {len(WATCHLIST)} Coins...")
     current_ts = time.time()
@@ -665,6 +783,8 @@ def run_master_scan_pass():
                 alerted_trades[alert_key] = current_ts
                 print(f"--> Found Valid SMC Trade on {sym}: {setup['action']} ({setup.get('setup_name')})")
                 register_active_trade(sym, setup)
+                try: execute_real_smc_trade(setup)
+                except: pass
                 action_emoji = "🟢 LONG" if setup['action'] == 'LONG' else "🔴 SHORT"
                 entry_f, sl_f, target_f, rrr_f = format_price(setup['entry']), format_price(setup['sl']), format_price(setup['target']), str(setup.get('rrr', '2.0'))
                 msg = (f"🎯 <b>NEW SMC INSTITUTIONAL SETUP: {sym}</b> 🎯\n\n• <b>Action:</b> {action_emoji}\n• <b>Trend:</b> {setup['trend']} (Slide 43)\n• <b>Pattern:</b> {setup.get('setup_name')}\n• <b>Source:</b> {setup.get('slide')}\n\n🔹 <b>Entry:</b> ${entry_f}\n🛑 <b>Stop Loss:</b> ${sl_f}\n🏁 <b>Target:</b> ${target_f}\n⚖️ <b>Risk:Reward:</b> 1:{rrr_f}\n\n🛡️ <b>Verified Filters:</b>\n  ✔️ Slide 40: Fresh Unmitigated Zone\n  ✔️ Slide 43: Go With Trend\n  ✔️ Slide 59: Liquidity Swept\n  ✔️ Slide 29: Reversal Candle Confirmed\n\n⏰ <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}")
