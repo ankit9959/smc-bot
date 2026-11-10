@@ -992,3 +992,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f'Loop Error: {e}')
             time.sleep(10)
+
+COINDCX_API_KEY = "904f9c44faf2c65159eccf037c9bed63f672ad56092e9da3"
+COINDCX_SECRET_KEY = "a9ca8ebdaef96f50843e0211feb5205025f5a1bc2983cca4491212fd4d33cf71"
+LIVE_TRADING = True
