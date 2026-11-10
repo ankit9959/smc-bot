@@ -57,6 +57,8 @@ def register_active_trade(sym, setup):
             "entry": float(setup.get("entry", 0)),
             "target": float(setup.get("target", 0)),
             "sl": float(setup.get("sl", 0)),
+            "initial_sl": float(setup.get("sl", 0)),
+            "stage": "INITIAL",
             "rrr": str(setup.get("rrr", "2.0")),
             "setup_name": setup.get("setup_name", "SMC Setup"),
             "date": datetime.now().strftime("%Y-%m-%d"),
@@ -74,16 +76,73 @@ def check_active_trade_outcomes(sym, last_candle):
 
     trade = active[t_key]
     act, entry, target, sl = trade["action"], trade["entry"], trade["target"], trade["sl"]
+    initial_sl = float(trade.get("initial_sl", sl))
+    if "initial_sl" not in trade:
+        trade["initial_sl"] = initial_sl
+    stage = trade.get("stage", "INITIAL")
     rrr = trade.get("rrr", "2.0")
     t_now, d_now = datetime.now().strftime("%H:%M:%S"), datetime.now().strftime("%d-%b-%Y")
     high = float(last_candle.get("high", last_candle.get("h", 0)))
     low = float(last_candle.get("low", last_candle.get("l", 0)))
 
+    # Initial risk R
+    is_long = "LONG" in act
+    risk = max(1e-6, (entry - initial_sl) if is_long else (initial_sl - entry))
+
+    # --- SMC AUTO TRAILING SL ENGINE (Slides 140 to 146) ---
+    updated_sl = False
+
+    if is_long:
+        # Stage 3: +3.5 R profit reached -> Trail to +2.0 R profit
+        if high >= entry + (3.5 * risk) and stage != "TRAILED_3R":
+            new_sl = round(entry + (2.0 * risk), 4 if entry < 10 else 2)
+            if new_sl > sl:
+                trade["sl"] = new_sl
+                trade["stage"] = "TRAILED_3R"
+                updated_sl = True
+                msg = f"🔒 <b>TRAILING STOP LOSS (PROFIT LOCKED): {clean}</b> 🔒\n\n• <b>Action:</b> 🟢 LONG\n• <b>Progress:</b> +3.5 R Profit Reached!\n• <b>New Trailing SL:</b> ${format_price(new_sl)} (Securing +2.0 R Profit!)\n• <b>Status:</b> Guaranteed Win Locked (Slide 143-144)!\n⏰ <b>Time:</b> {t_now}"
+                send_telegram_alert(msg)
+        # Stage 2: +2.0 R profit reached -> Move to Break-Even (Slide 142)
+        elif high >= entry + (2.0 * risk) and stage == "INITIAL":
+            new_sl = round(entry + (0.05 * risk), 4 if entry < 10 else 2)
+            if new_sl > sl:
+                trade["sl"] = new_sl
+                trade["stage"] = "BREAK_EVEN"
+                updated_sl = True
+                msg = f"🔄 <b>TRAILING STOP LOSS (BREAK-EVEN): {clean}</b> 🔄\n\n• <b>Action:</b> 🟢 LONG\n• <b>Progress:</b> +2.0 R Profit Reached!\n• <b>New SL:</b> ${format_price(new_sl)} (Entry Cost)\n• <b>Status:</b> 100% Risk-Free Trade (Zero Loss Guarantee - Slide 142)!\n⏰ <b>Time:</b> {t_now}"
+                send_telegram_alert(msg)
+
+    else: # SHORT
+        # Stage 3: +3.5 R profit reached -> Trail to +2.0 R profit
+        if low <= entry - (3.5 * risk) and stage != "TRAILED_3R":
+            new_sl = round(entry - (2.0 * risk), 4 if entry < 10 else 2)
+            if new_sl < sl:
+                trade["sl"] = new_sl
+                trade["stage"] = "TRAILED_3R"
+                updated_sl = True
+                msg = f"🔒 <b>TRAILING STOP LOSS (PROFIT LOCKED): {clean}</b> 🔒\n\n• <b>Action:</b> 🔴 SHORT\n• <b>Progress:</b> +3.5 R Profit Reached!\n• <b>New Trailing SL:</b> ${format_price(new_sl)} (Securing +2.0 R Profit!)\n• <b>Status:</b> Guaranteed Win Locked (Slide 143-144)!\n⏰ <b>Time:</b> {t_now}"
+                send_telegram_alert(msg)
+        # Stage 2: +2.0 R profit reached -> Move to Break-Even (Slide 142)
+        elif low <= entry - (2.0 * risk) and stage == "INITIAL":
+            new_sl = round(entry - (0.05 * risk), 4 if entry < 10 else 2)
+            if new_sl < sl:
+                trade["sl"] = new_sl
+                trade["stage"] = "BREAK_EVEN"
+                updated_sl = True
+                msg = f"🔄 <b>TRAILING STOP LOSS (BREAK-EVEN): {clean}</b> 🔄\n\n• <b>Action:</b> 🔴 SHORT\n• <b>Progress:</b> +2.0 R Profit Reached!\n• <b>New SL:</b> ${format_price(new_sl)} (Entry Cost)\n• <b>Status:</b> 100% Risk-Free Trade (Zero Loss Guarantee - Slide 142)!\n⏰ <b>Time:</b> {t_now}"
+                send_telegram_alert(msg)
+
+    if updated_sl:
+        sl = trade["sl"]
+        stage = trade["stage"]
+        save_json_data(ACTIVE_TRADES_FILE, active)
+
+    # --- OUTCOME CHECK ---
     outcome = None
-    if "LONG" in act:
+    if is_long:
         if high >= target: outcome = "TARGET_HIT"
         elif low <= sl: outcome = "SL_HIT"
-    elif "SHORT" in act:
+    else:
         if low <= target: outcome = "TARGET_HIT"
         elif high >= sl: outcome = "SL_HIT"
 
@@ -95,10 +154,19 @@ def check_active_trade_outcomes(sym, last_candle):
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
 
     elif outcome == "SL_HIT":
-        msg = f"🛑 <b>STOP LOSS HIT</b> 🛑\n\n• <b>Coin:</b> {clean}\n• <b>Type:</b> {act} 🔴\n• <b>Entry:</b> ${format_price(entry)} ➔ <b>Exit SL:</b> ${format_price(sl)}\n• <b>Status:</b> Safe Exit per Risk Management\n⏰ <b>Time:</b> {t_now}"
-        send_telegram_alert(msg)
-        print(f"--> [STOP LOSS HIT ALERT SENT] for {clean} at ${sl}!")
-        record_journal_entry(clean, act, entry, sl, "STOP LOSS 🛑", "-1.00 R", "LOSS", d_now, t_now)
+        if stage == "TRAILED_3R":
+            secured_r = "+2.00 R"
+            msg = f"🔒 <b>TRAILING STOP LOSS HIT (PROFIT SECURED!)</b> 🔒\n\n• <b>Coin:</b> {clean}\n• <b>Type:</b> {act}\n• <b>Entry:</b> ${format_price(entry)} ➔ <b>Exit SL:</b> ${format_price(sl)}\n• <b>Result:</b> {secured_r} Profit Locked!\n• <b>Status:</b> Safe Exit via Trailing SL (Slide 143-144)!\n⏰ <b>Time:</b> {t_now}"
+            send_telegram_alert(msg)
+            record_journal_entry(clean, act, entry, sl, "TRAILING SL 🔒", secured_r, "WIN", d_now, t_now)
+        elif stage == "BREAK_EVEN":
+            msg = f"🛡️ <b>BREAK-EVEN EXIT (ZERO LOSS)</b> 🛡️\n\n• <b>Coin:</b> {clean}\n• <b>Type:</b> {act}\n• <b>Entry:</b> ${format_price(entry)} ➔ <b>Exit SL:</b> ${format_price(sl)}\n• <b>Result:</b> 0.00 R (Capital Protected!)\n• <b>Status:</b> Safe Exit at Cost per Slide 142!\n⏰ <b>Time:</b> {t_now}"
+            send_telegram_alert(msg)
+            record_journal_entry(clean, act, entry, sl, "BREAK-EVEN 🛡️", "0.00 R", "WIN", d_now, t_now)
+        else:
+            msg = f"🛑 <b>STOP LOSS HIT</b> 🛑\n\n• <b>Coin:</b> {clean}\n• <b>Type:</b> {act} 🔴\n• <b>Entry:</b> ${format_price(entry)} ➔ <b>Exit SL:</b> ${format_price(sl)}\n• <b>Status:</b> Safe Exit per Risk Management\n⏰ <b>Time:</b> {t_now}"
+            send_telegram_alert(msg)
+            record_journal_entry(clean, act, entry, sl, "STOP LOSS 🛑", "-1.00 R", "LOSS", d_now, t_now)
         del active[t_key]; save_json_data(ACTIVE_TRADES_FILE, active)
 
 def record_journal_entry(sym, act, entry, exit_p, result, rrr, status, d_now, t_now):
