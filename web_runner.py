@@ -107,45 +107,94 @@ def start_bot_thread():
 
 
 
+
+
+def direct_coindcx_call(endpoint, payload):
+    p = payload.copy()
+    p["timestamp"] = int(time.time() * 1000)
+    json_str = json.dumps(p, separators=(',', ':'))
+    sig = hmac.new(
+        smc_bot.COINDCX_SECRET_KEY.encode('utf-8'),
+        json_str.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    headers = {
+        'Content-Type': 'application/json',
+        'X-AUTH-APIKEY': smc_bot.COINDCX_API_KEY,
+        'X-AUTH-SIGNATURE': sig,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    }
+    url = f"https://api.coindcx.com{endpoint}"
+    r = requests.post(url, data=json_str, headers=headers, timeout=10)
+    try:
+        data = r.json()
+    except Exception:
+        data = r.text
+    return {"status_code": r.status_code, "data": data}
+
 @app.route('/test_trade')
 def test_trade_instant():
-    buy_res = None
-    for otype in ["market_order", "market"]:
-        p = {
+    trials = [
+        ("/exchange/v1/derivatives/futures/orders/create", {
             "side": "buy",
             "pair": "B-XRP_USDT",
-            "order_type": otype,
-            "total_quantity": 10.0,
-            "leverage": 10.0,
+            "order_type": "market",
+            "total_quantity": 10,
+            "leverage": 10,
             "margin_currency_short_name": "INR",
             "notification": "no_notification"
-        }
-        res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", p)
-        if isinstance(res, dict) and ("id" in res or "orders" in res or res.get("status") in ["open", "init", "filled"]):
-            buy_res = res
-            break
-        buy_res = res
-
-    if isinstance(buy_res, dict) and ("id" in buy_res or "orders" in buy_res or buy_res.get("status") in ["open", "init", "filled"]):
-        b_id = buy_res.get("id") or str(buy_res)
-        smc_bot.send_real_telegram_alert(f"🟢 LIVE BUY DONE on CoinDCX INR Futures!\nPair: B-XRP_USDT (10 XRP)\nOrder ID: {b_id}\nClosing in 5 seconds...")
-        time.sleep(5)
-        sell_p = {
-            "side": "sell",
+        }),
+        ("/exchange/v1/derivatives/futures/orders/create", {
+            "side": "buy",
             "pair": "B-XRP_USDT",
-            "order_type": p["order_type"],
-            "total_quantity": 10.0,
-            "leverage": 10.0,
+            "order_type": "market_order",
+            "total_quantity": 10,
+            "leverage": 10,
             "margin_currency_short_name": "INR",
             "notification": "no_notification"
-        }
-        s_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", sell_p)
-        s_id = s_res.get("id") or str(s_res)
-        smc_bot.send_real_telegram_alert(f"🏁 LIVE SELL DONE!\nOrder ID: {s_id}\n✅ CoinDCX Futures Verified Live!")
-        return {"status": "SUCCESS", "buy": buy_res, "sell": s_res}
-    else:
-        smc_bot.send_real_telegram_alert(f"❌ BUY REJECTED by CoinDCX:\n{buy_res}")
-        return {"status": "FAILED", "raw": buy_res}
+        }),
+        ("/exchange/v1/derivatives/futures/orders", {
+            "side": "buy",
+            "pair": "B-XRP_USDT",
+            "order_type": "market_order",
+            "total_quantity": 10,
+            "leverage": 10,
+            "margin_currency_short_name": "INR",
+            "notification": "no_notification"
+        }),
+        ("/exchange/v1/derivatives/futures/orders/create", {
+            "side": "buy",
+            "pair": "B-BTC_USDT",
+            "order_type": "market",
+            "total_quantity": 0.001,
+            "leverage": 10,
+            "margin_currency_short_name": "INR",
+            "notification": "no_notification"
+        })
+    ]
+
+    all_res = []
+    for ep, p in trials:
+        res = direct_coindcx_call(ep, p)
+        all_res.append({"endpoint": ep, "pair": p["pair"], "type": p["order_type"], "res": res})
+        d = res.get("data")
+        if res["status_code"] in [200, 201] or (isinstance(d, dict) and ("id" in d or "orders" in d)):
+            order_id = d.get("id") if isinstance(d, dict) else str(d)
+            smc_bot.send_real_telegram_alert(f"🟢 REAL LIVE BUY SUCCESSFUL!
+Pair: {p['pair']}
+Order ID: {order_id}
+Closing in 5 seconds...")
+            time.sleep(5)
+            p_sell = p.copy()
+            p_sell["side"] = "sell"
+            sell_res = direct_coindcx_call(ep, p_sell)
+            smc_bot.send_real_telegram_alert(f"🏁 REAL LIVE SELL SUCCESSFUL!
+Response: {sell_res.get('data')}
+✅ CoinDCX Live Trade Verified!")
+            return {"status": "SUCCESS", "buy": res, "sell": sell_res}
+
+    smc_bot.send_real_telegram_alert(f"❌ FAILED. Full diagnostic captured. Check /test_trade in browser.")
+    return {"status": "DIAGNOSTIC", "results": all_res}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
