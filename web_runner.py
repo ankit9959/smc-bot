@@ -20,49 +20,102 @@ def send_system_alert(msg):
 
 
 @app.route('/test_trade')
-def test_trade_instant():
-    trials = [
-        ('/exchange/v1/derivatives/futures/orders/create', {
-            'side': 'buy',
-            'pair': 'B-BTC_USDT',
-            'order_type': 'market',
-            'total_quantity': 0.001,
-            'leverage': 10,
-            'margin_currency_short_name': 'INR',
-            'notification': 'no_notification'
-        }),
-        ('/exchange/v1/derivatives/futures/orders/create', {
+def test_trade():
+    import time
+    def extract_order_id(res):
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], dict):
+            return res[0].get('id')
+        if isinstance(res, dict):
+            if 'id' in res:
+                return res['id']
+            if 'data' in res and isinstance(res['data'], list) and len(res['data']) > 0:
+                return res['data'][0].get('id')
+        return None
+
+    variants = [
+        {
+            'order': {
+                'side': 'buy',
+                'pair': 'B-BTC_USDT',
+                'order_type': 'market_order',
+                'total_quantity': 0.001,
+                'leverage': 10,
+                'notification': 'no_notification',
+                'margin_currency_short_name': 'INR'
+            }
+        },
+        {
+            'order': {
+                'side': 'buy',
+                'pair': 'B-BTC_USDT',
+                'order_type': 'market_order',
+                'total_quantity': 0.001,
+                'leverage': 10,
+                'notification': 'no_notification'
+            },
+            'margin_currency_short_name': 'INR'
+        },
+        {
+            'order': {
+                'side': 'buy',
+                'pair': 'B-BTC_USDT',
+                'order_type': 'market_order',
+                'total_quantity': 0.001,
+                'leverage': 10,
+                'notification': 'no_notification'
+            }
+        },
+        {
             'side': 'buy',
             'pair': 'B-BTC_USDT',
             'order_type': 'market_order',
             'total_quantity': 0.001,
             'leverage': 10,
-            'margin_currency_short_name': 'INR',
-            'notification': 'no_notification'
-        }),
-        ('/exchange/v1/orders/create', {
-            'side': 'buy',
-            'order_type': 'market_order',
-            'market': 'XRPINR',
-            'total_quantity': 5
-        })
+            'notification': 'no_notification',
+            'margin_currency_short_name': 'INR'
+        }
     ]
-    last_err = None
-    for ep, p in trials:
-        res = smc_bot.coindcx_private_request(ep, p)
-        if isinstance(res, dict) and ('id' in res or 'orders' in res):
-            order_id = res.get('id') if 'id' in res else res['orders'][0]['id']
-            pair_name = p.get('pair') or p.get('market')
-            smc_bot.send_real_telegram_alert('🟢 LIVE ORDER FILLED! Pair: ' + str(pair_name) + ' ID: ' + str(order_id) + ' Closing in 5s...')
-            time.sleep(5)
-            p_sell = p.copy()
-            p_sell['side'] = 'sell'
-            s = smc_bot.coindcx_private_request(ep, p_sell)
-            smc_bot.send_real_telegram_alert('🏁 LIVE POSITION CLOSED! Response: ' + str(s))
-            return {'status': 'SUCCESS', 'pair': pair_name, 'buy': res, 'sell': s}
-        last_err = {'ep': ep, 'p': p, 'res': res}
-    smc_bot.send_real_telegram_alert('❌ LIVE ORDER ATTEMPT: ' + str(last_err))
-    return {'status': 'FAILED', 'details': last_err}
+
+    ep = '/exchange/v1/derivatives/futures/orders/create'
+    results = []
+    success_order_id = None
+    winning_variant = None
+    buy_res = None
+
+    for v in variants:
+        try:
+            res = smc_bot.coindcx_private_request(ep, v.copy())
+            oid = extract_order_id(res)
+            if oid:
+                success_order_id = oid
+                winning_variant = v
+                buy_res = res
+                break
+            results.append({'payload': v, 'res': res})
+        except Exception as e:
+            results.append({'payload': v, 'error': str(e)})
+
+    if success_order_id:
+        msg = '🟢 LIVE BTC FUTURES ORDER PLACED! ID: ' + str(success_order_id) + ', Pair: B-BTC_USDT, Qty: 0.001'
+        smc_bot.send_real_telegram_alert(msg)
+        time.sleep(3)
+        
+        sell_payload = winning_variant.copy()
+        if 'order' in sell_payload:
+            sell_payload['order'] = sell_payload['order'].copy()
+            sell_payload['order']['side'] = 'sell'
+        else:
+            sell_payload['side'] = 'sell'
+            
+        sell_res = smc_bot.coindcx_private_request(ep, sell_payload)
+        sell_oid = extract_order_id(sell_res)
+        close_msg = '🏁 LIVE POSITION CLOSED! Sell ID: ' + str(sell_oid or sell_res)
+        smc_bot.send_real_telegram_alert(close_msg)
+        
+        return jsonify({'status': 'SUCCESS', 'buy_id': success_order_id, 'sell_id': sell_oid, 'buy_res': buy_res, 'sell_res': sell_res})
+
+    smc_bot.send_real_telegram_alert('❌ BTC Futures test failed. Details: ' + str(results[:2]))
+    return jsonify({'status': 'FAILED', 'trials': results})
 
 @app.route('/')
 def home():
