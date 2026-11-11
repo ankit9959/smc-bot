@@ -109,18 +109,26 @@ def start_bot_thread():
 def test_trade_instant():
     try:
         import time
-        smc_bot.send_real_telegram_alert("⚡ <b>TESTING LIVE BUY & SELL ON COINDCX...</b>")
+        smc_bot.send_real_telegram_alert("⚡ <b>TESTING INR FUTURES 1 XRP ON COINDCX...</b>")
         b = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "buy", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
+            "side": "buy", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0,
+            "leverage": 10.0, "margin_currency_short_name": "INR", "notification": "no_notification",
+            "timestamp": int(time.time() * 1000)
         })
-        b_id = b.get("id", str(b))
-        smc_bot.send_real_telegram_alert(f"🟢 <b>LIVE BUY DONE!</b> Order ID: <code>{b_id}</code>\nClosing in 5 seconds...")
+        if not isinstance(b, dict) or "id" not in b:
+            err = b.get("error") or b.get("message") or str(b)
+            smc_bot.send_real_telegram_alert(f"❌ <b>BUY FAILED:</b> <code>{err}</code>")
+            return {"status": "FAILED", "error": err, "raw": b}
+        b_id = b["id"]
+        smc_bot.send_real_telegram_alert(f"🟢 <b>REAL LIVE BUY SUCCESSFUL!</b>\n• Order ID: <code>{b_id}</code>\n⏳ Closing in 5s...")
         time.sleep(5)
         s = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "sell", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
+            "side": "sell", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0,
+            "leverage": 10.0, "margin_currency_short_name": "INR", "notification": "no_notification",
+            "timestamp": int(time.time() * 1000)
         })
-        s_id = s.get("id", str(s))
-        smc_bot.send_real_telegram_alert(f"🏁 <b>LIVE SELL DONE!</b> Order ID: <code>{s_id}</code>\n✅ <b>BUY & SELL VERIFIED LIVE!</b>")
+        s_id = s.get("id", "N/A") if isinstance(s, dict) else str(s)
+        smc_bot.send_real_telegram_alert(f"🏁 <b>REAL LIVE SELL DONE!</b>\n• Buy ID: <code>{b_id}</code>\n• Sell ID: <code>{s_id}</code>\n✅ <b>CHECK YOUR COINDCX APP NOW!</b>")
         return {"status": "SUCCESS", "buy_id": b_id, "sell_id": s_id}
     except Exception as e:
         smc_bot.send_real_telegram_alert(f"❌ Error: {e}")
