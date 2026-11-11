@@ -175,3 +175,16 @@ def test_trade_instant():
     except Exception as e:
         smc_bot.send_real_telegram_alert(f"❌ Error: {e}")
         return {"error": str(e)}
+
+@app.route("/test_trade")
+def test_trade_instant():
+    import time
+    smc_bot.send_real_telegram_alert("⚡ TESTING LIVE ORDER ON COINDCX...")
+    b = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {"side":"buy","pair":"B-XRP_USDT","order_type":"market_order","total_quantity":1.0,"leverage":10.0,"timestamp":int(time.time()*1000)})
+    b_id = b.get("id", str(b))
+    smc_bot.send_real_telegram_alert(f"🟢 LIVE BUY DONE! ID: {b_id}")
+    time.sleep(5)
+    s = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {"side":"sell","pair":"B-XRP_USDT","order_type":"market_order","total_quantity":1.0,"leverage":10.0,"timestamp":int(time.time()*1000)})
+    s_id = s.get("id", str(s))
+    smc_bot.send_real_telegram_alert(f"🏁 LIVE SELL DONE! ID: {s_id}")
+    return {"status":"SUCCESS","buy":b_id,"sell":s_id}
