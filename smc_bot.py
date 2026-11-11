@@ -1115,3 +1115,6 @@ def execute_coindcx_live_trade(setup):
     ]
     send_real_telegram_alert("\n".join(msg_lines))
     return True
+
+# Ensure scanner always routes directly to the live CoinDCX execution
+execute_real_smc_trade = execute_coindcx_live_trade
