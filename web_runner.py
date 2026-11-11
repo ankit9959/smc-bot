@@ -105,86 +105,27 @@ def start_bot_thread():
             send_system_alert(f"⚠️ <b>StockMindset System Alert</b> ⚠️\\n\\n❌ <b>એરર:</b> {str(e)[:200]}")
             time.sleep(15)
 
-if __name__ == '__main__':
-    threading.Thread(target=start_bot_thread, daemon=True).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
-
-@app.route('/api/live_test_trade')
-def live_test_trade():
-    try:
-        import time
-        smc_bot.send_real_telegram_alert("⚡ <b>TESTING LIVE COINDCX FUTURES...</b>\n• Action: Market BUY 1 XRP (10x)")
-        buy_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "buy", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
-        })
-        if "id" not in buy_res:
-            err = buy_res.get("error") or buy_res.get("message") or str(buy_res)
-            smc_bot.send_real_telegram_alert(f"❌ <b>BUY FAILED:</b> <code>{err}</code>")
-            return {"status": "FAILED", "error": err, "raw": buy_res}
-        b_id = buy_res.get("id")
-        smc_bot.send_real_telegram_alert(f"🟢 <b>LIVE BUY SUCCESSFUL!</b>\n• Order ID: <code>{b_id}</code>\n⏳ Closing in 5s...")
-        time.sleep(5)
-        sell_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "sell", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
-        })
-        s_id = sell_res.get("id", "N/A")
-        smc_bot.send_real_telegram_alert(f"🏁 <b>LIVE SELL / CLOSED SUCCESSFUL!</b> 🏁\n• Buy ID: <code>{b_id}</code>\n• Sell ID: <code>{s_id}</code>\n✅ <b>BUY & SELL 100% OPERATIONAL!</b>")
-        return {"status": "SUCCESS", "buy_id": b_id, "sell_id": s_id}
-    except Exception as e:
-        smc_bot.send_real_telegram_alert(f"❌ <b>ERROR:</b> {e}")
-        return {"error": str(e)}
-
 @app.route('/test_trade')
 def test_trade_instant():
     try:
         import time
-        smc_bot.send_real_telegram_alert("⚡ <b>TESTING 1 XRP LIVE BUY & SELL ON COINDCX...</b>")
-        b_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
+        smc_bot.send_real_telegram_alert("⚡ <b>TESTING LIVE BUY & SELL ON COINDCX...</b>")
+        b = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
             "side": "buy", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
         })
-        b_id = b_res.get("id", str(b_res))
+        b_id = b.get("id", str(b))
         smc_bot.send_real_telegram_alert(f"🟢 <b>LIVE BUY DONE!</b> Order ID: <code>{b_id}</code>\nClosing in 5 seconds...")
         time.sleep(5)
-        s_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
+        s = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
             "side": "sell", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
         })
-        s_id = s_res.get("id", str(s_res))
+        s_id = s.get("id", str(s))
         smc_bot.send_real_telegram_alert(f"🏁 <b>LIVE SELL DONE!</b> Order ID: <code>{s_id}</code>\n✅ <b>BUY & SELL VERIFIED LIVE!</b>")
-        return {"status": "SUCCESS", "buy": b_id, "sell": s_id}
+        return {"status": "SUCCESS", "buy_id": b_id, "sell_id": s_id}
     except Exception as e:
         smc_bot.send_real_telegram_alert(f"❌ Error: {e}")
         return {"status": "ERROR", "error": str(e)}
 
-@app.route('/test_trade')
-def test_trade_instant():
-    try:
-        import time
-        smc_bot.send_real_telegram_alert("⚡ <b>TESTING 1 XRP LIVE BUY & SELL ON COINDCX...</b>")
-        b_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "buy", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
-        })
-        b_id = b_res.get("id", str(b_res))
-        smc_bot.send_real_telegram_alert(f"🟢 <b>LIVE BUY DONE!</b> Order ID: <code>{b_id}</code>\nClosing in 5s...")
-        time.sleep(5)
-        s_res = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {
-            "side": "sell", "pair": "B-XRP_USDT", "order_type": "market_order", "total_quantity": 1.0, "leverage": 10.0, "timestamp": int(time.time() * 1000)
-        })
-        s_id = s_res.get("id", str(s_res))
-        smc_bot.send_real_telegram_alert(f"🏁 <b>LIVE SELL DONE!</b> Order ID: <code>{s_id}</code>\n✅ <b>BUY & SELL VERIFIED!</b>")
-        return {"status": "SUCCESS", "buy": b_id, "sell": s_id}
-    except Exception as e:
-        smc_bot.send_real_telegram_alert(f"❌ Error: {e}")
-        return {"error": str(e)}
-
-@app.route("/test_trade")
-def test_trade_instant():
-    import time
-    smc_bot.send_real_telegram_alert("⚡ TESTING LIVE ORDER ON COINDCX...")
-    b = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {"side":"buy","pair":"B-XRP_USDT","order_type":"market_order","total_quantity":1.0,"leverage":10.0,"timestamp":int(time.time()*1000)})
-    b_id = b.get("id", str(b))
-    smc_bot.send_real_telegram_alert(f"🟢 LIVE BUY DONE! ID: {b_id}")
-    time.sleep(5)
-    s = smc_bot.coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", {"side":"sell","pair":"B-XRP_USDT","order_type":"market_order","total_quantity":1.0,"leverage":10.0,"timestamp":int(time.time()*1000)})
-    s_id = s.get("id", str(s))
-    smc_bot.send_real_telegram_alert(f"🏁 LIVE SELL DONE! ID: {s_id}")
-    return {"status":"SUCCESS","buy":b_id,"sell":s_id}
+if __name__ == '__main__':
+    threading.Thread(target=start_bot_thread, daemon=True).start()
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
