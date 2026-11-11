@@ -1118,3 +1118,6 @@ def execute_coindcx_live_trade(setup):
 
 # Ensure scanner always routes directly to the live CoinDCX execution
 execute_real_smc_trade = execute_coindcx_live_trade
+
+# Ensure scanner always routes directly to the live CoinDCX execution
+execute_real_smc_trade = execute_coindcx_live_trade
