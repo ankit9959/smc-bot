@@ -22,38 +22,47 @@ def send_system_alert(msg):
 @app.route('/test_trade')
 def test_trade_instant():
     trials = [
-        {
+        ('/exchange/v1/derivatives/futures/orders/create', {
             'side': 'buy',
-            'pair': 'B-XRP_USDT',
-            'order_type': 'market_order',
-            'total_quantity': 10,
-            'leverage': 10,
-            'margin_currency_short_name': 'INR',
-            'notification': 'no_notification'
-        },
-        {
-            'side': 'buy',
-            'pair': 'B-XRP_USDT',
+            'pair': 'B-BTC_USDT',
             'order_type': 'market',
-            'total_quantity': 10,
+            'total_quantity': 0.001,
             'leverage': 10,
             'margin_currency_short_name': 'INR',
             'notification': 'no_notification'
-        }
+        }),
+        ('/exchange/v1/derivatives/futures/orders/create', {
+            'side': 'buy',
+            'pair': 'B-BTC_USDT',
+            'order_type': 'market_order',
+            'total_quantity': 0.001,
+            'leverage': 10,
+            'margin_currency_short_name': 'INR',
+            'notification': 'no_notification'
+        }),
+        ('/exchange/v1/orders/create', {
+            'side': 'buy',
+            'order_type': 'market_order',
+            'market': 'XRPINR',
+            'total_quantity': 5
+        })
     ]
-    b = None
-    for p in trials:
-        b = smc_bot.coindcx_private_request('/exchange/v1/derivatives/futures/orders/create', p)
-        if isinstance(b, dict) and 'id' in b:
-            smc_bot.send_real_telegram_alert('🟢 REAL ORDER PLACED! ID: ' + str(b['id']) + ' Closing in 5s...')
+    last_err = None
+    for ep, p in trials:
+        res = smc_bot.coindcx_private_request(ep, p)
+        if isinstance(res, dict) and ('id' in res or 'orders' in res):
+            order_id = res.get('id') if 'id' in res else res['orders'][0]['id']
+            pair_name = p.get('pair') or p.get('market')
+            smc_bot.send_real_telegram_alert('🟢 LIVE ORDER FILLED! Pair: ' + str(pair_name) + ' ID: ' + str(order_id) + ' Closing in 5s...')
             time.sleep(5)
             p_sell = p.copy()
             p_sell['side'] = 'sell'
-            s = smc_bot.coindcx_private_request('/exchange/v1/derivatives/futures/orders/create', p_sell)
-            smc_bot.send_real_telegram_alert('🏁 REAL POSITION CLOSED! Response: ' + str(s))
-            return {'status': 'SUCCESS', 'buy': b, 'sell': s}
-    smc_bot.send_real_telegram_alert('❌ ORDER FAILED: ' + str(b))
-    return {'status': 'FAILED', 'raw': b}
+            s = smc_bot.coindcx_private_request(ep, p_sell)
+            smc_bot.send_real_telegram_alert('🏁 LIVE POSITION CLOSED! Response: ' + str(s))
+            return {'status': 'SUCCESS', 'pair': pair_name, 'buy': res, 'sell': s}
+        last_err = {'ep': ep, 'p': p, 'res': res}
+    smc_bot.send_real_telegram_alert('❌ LIVE ORDER ATTEMPT: ' + str(last_err))
+    return {'status': 'FAILED', 'details': last_err}
 
 @app.route('/')
 def home():
