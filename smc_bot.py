@@ -996,3 +996,83 @@ if __name__ == "__main__":
 COINDCX_API_KEY = "815eace59991bb09e930e3bb5c31f714b12007221dfb9118"
 COINDCX_SECRET_KEY = "9cf9b4528c9485ddaaea0a5e9d654a17d64cac2dbdd9c805c8d6580c4bd87ea3"
 LIVE_TRADING = True
+
+# ==============================================================================
+#                 BULLETPROOF COINDCX LIVE TRADER OVERRIDE
+# ==============================================================================
+LIVE_TRADING = True
+
+def calculate_lot_size(symbol, entry_price, sl_price):
+    try:
+        sl_diff = abs(entry_price - sl_price)
+        if sl_diff <= 0: sl_diff = 1.0
+        risk_usdt = max(float(RISK_AMOUNT_INR) / 90.0, 0.35)
+        raw_qty = risk_usdt / sl_diff
+        min_qty_map = {
+            "BTCUSDT": 0.001, "ETHUSDT": 0.01, "SOLUSDT": 0.1,
+            "XRPUSDT": 1.0, "BNBUSDT": 0.01, "DOGEUSDT": 10.0,
+            "AVAXUSDT": 0.1, "NEARUSDT": 1.0
+        }
+        min_q = min_qty_map.get(symbol, 0.01)
+        qty = max(raw_qty, min_q)
+        dec_map = {"BTCUSDT": 3, "ETHUSDT": 2, "SOLUSDT": 1, "XRPUSDT": 0, "BNBUSDT": 2, "DOGEUSDT": 0, "AVAXUSDT": 1, "NEARUSDT": 0}
+        dec = dec_map.get(symbol, 2)
+        return round(qty, dec) if dec > 0 else int(qty)
+    except:
+        return 0.001
+
+def execute_coindcx_live_trade(setup):
+    if not COINDCX_API_KEY:
+        send_real_telegram_alert("⚠️ <b>COINDCX LIVE:</b> API Key missing!")
+        return False
+    data = load_live_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if data.get("date") != today:
+        data["date"] = today
+        data["daily_trades_count"] = 0
+    if data.get("daily_trades_count", 0) >= MAX_DAILY_TRADES:
+        send_real_telegram_alert(f"⚠️ <b>COINDCX LIVE:</b> Daily limit ({MAX_DAILY_TRADES}) reached for today!")
+        return False
+    if data.get("active") is not None:
+        send_real_telegram_alert(f"⚠️ <b>COINDCX LIVE:</b> Already 1 active trade running ({data['active'].get('coin')})!")
+        return False
+
+    sym = setup.get("symbol")
+    act = setup.get("action")
+    entry = setup.get("entry")
+    sl = setup.get("sl")
+    target = setup.get("target")
+    rrr = setup.get("rrr", "2.0")
+
+    qty = calculate_lot_size(sym, entry, sl)
+    side = "buy" if act == "LONG" else "sell"
+    clean_sym = sym.replace("USDT", "").replace("B-", "").replace("_", "")
+    pair = f"B-{clean_sym}_USDT"
+
+    order_payload = {
+        "side": side, "pair": pair, "order_type": "market_order",
+        "total_quantity": qty, "leverage": 10.0, "timestamp": int(time.time() * 1000)
+    }
+
+    send_real_telegram_alert(f"⚡ <b>EXECUTING COINDCX LIVE ORDER...</b>\n• <b>Coin:</b> {sym}\n• <b>Action:</b> {act}\n• <b>Qty:</b> {qty}\n• <b>Leverage:</b> 10x")
+    res = coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", order_payload)
+
+    if "error" in res or res.get("status") in ["rejected", "error"] or "id" not in res:
+        err = res.get("error") or res.get("message") or str(res)
+        send_real_telegram_alert(f"⚠️ <b>COINDCX ORDER REJECTED!</b>\n• <b>Coin:</b> {sym}\n• <b>Action:</b> {act}\n• <b>Reason:</b> <code>{err}</code>")
+        return False
+
+    t_now = datetime.now().strftime("%H:%M:%S")
+    trade_data = {
+        "coin": sym, "pair": pair, "action": act, "qty": qty,
+        "entry": entry, "sl": sl, "initial_sl": sl, "target": target,
+        "rrr": rrr, "risk_inr": RISK_AMOUNT_INR, "stage": "INITIAL",
+        "date": today, "time": t_now, "order_id": res.get("id", "N/A")
+    }
+    data["active"] = trade_data
+    data["daily_trades_count"] = data.get("daily_trades_count", 0) + 1
+    save_live_log(data)
+
+    act_name = "🟢 BUY / LONG" if act == "LONG" else "🔴 SELL / SHORT"
+    send_real_telegram_alert(f"🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀\n\n• <b>Coin:</b> {sym}\n• <b>Action:</b> {act_name}\n• <b>Quantity:</b> {qty}\n• <b>Leverage:</b> 10x\n• <b>Entry:</b> ${entry}\n• <b>Stop Loss:</b> ${sl}\n• <b>Target:</b> ${target}\n• <b>RRR:</b> {rrr}\n• <b>Risk:</b> ₹{RISK_AMOUNT_INR}\n• <b>Order ID:</b> <code>{res.get('id')}</code>\n⏰ Time: {t_now}")
+    return True
