@@ -1206,3 +1206,117 @@ def on_live_trade_closed(sym, outcome):
     pair = "B-" + clean_sym + "_USDT"
     close_coindcx_position(pair)
     return _orig_on_live_trade_closed(sym, outcome)
+
+# === SMART DYNAMIC LEVERAGE (5x TO COIN MAX / 200x) ===
+def get_coin_max_leverage(pair, side="buy"):
+    try:
+        import requests
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/data/instrument?pair=" + pair + "&margin_currency_short_name=INR"
+        r = requests.get(url, timeout=5).json()
+        inst = r.get("instrument", {})
+        ml = int(float(inst.get("max_leverage_long" if side == "buy" else "max_leverage_short", 20)))
+        return min(200, max(5, ml))
+    except Exception:
+        return 20
+
+def execute_coindcx_live_trade(setup):
+    global COINDCX_API_KEY, COINDCX_SECRET_KEY, RISK_AMOUNT_INR, MAX_DAILY_TRADES
+    MAX_DAILY_TRADES = 2
+    if not COINDCX_API_KEY:
+        send_real_telegram_alert("⚠️ <b>COINDCX LIVE:</b> API Key missing!")
+        return False
+    data = load_live_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if data.get("date") != today:
+        data["date"] = today
+        data["daily_trades_count"] = 0
+    if data.get("daily_trades_count", 0) >= 2:
+        send_real_telegram_alert("⚠️ <b>COINDCX LIVE:</b> Daily limit (2/2) reached for today!")
+        return False
+    if data.get("active") is not None:
+        send_real_telegram_alert("⚠️ <b>COINDCX LIVE:</b> Already 1 active trade running (" + str(data["active"].get("coin")) + ")!")
+        return False
+
+    sym = setup.get("symbol")
+    act = setup.get("action")
+    entry = float(setup.get("entry", 0))
+    sl = float(setup.get("sl", 0))
+    target = setup.get("target")
+    rrr = setup.get("rrr", "2.0")
+
+    qty = calculate_lot_size(sym, entry, sl)
+    side = "buy" if act == "LONG" else "sell"
+    clean_sym = sym.replace("USDT", "").replace("B-", "").replace("_", "")
+    pair = "B-" + clean_sym + "_USDT"
+
+    max_coin_lev = get_coin_max_leverage(pair, side)
+    wallet_balance = float(RISK_AMOUNT_INR) / 0.03
+    pos_val_inr = float(qty) * float(entry) * 90.0
+    min_req_lev = pos_val_inr / max(1.0, wallet_balance * 0.25)
+    leverage = min(max_coin_lev, 200, max(5, int(round(min_req_lev))))
+
+    order_payload = {
+        "order": {
+            "side": side,
+            "pair": pair,
+            "order_type": "market_order",
+            "total_quantity": qty,
+            "leverage": leverage,
+            "notification": "no_notification",
+            "margin_currency_short_name": "INR"
+        }
+    }
+
+    send_real_telegram_alert("⚡ <b>EXECUTING COINDCX LIVE ORDER...</b>\n• <b>Coin:</b> " + str(sym) + "\n• <b>Action:</b> " + str(act) + "\n• <b>Qty:</b> " + str(qty) + "\n• <b>Leverage:</b> " + str(leverage) + "x")
+    res = coindcx_private_request("/exchange/v1/derivatives/futures/orders/create", order_payload)
+
+    oid = None
+    if isinstance(res, list) and len(res) > 0 and isinstance(res[0], dict):
+        oid = res[0].get("id")
+    elif isinstance(res, dict):
+        oid = res.get("id") or (res.get("data", [{}])[0].get("id") if isinstance(res.get("data"), list) else None)
+
+    if not oid:
+        err = res.get("message") if isinstance(res, dict) else (res[0].get("message") if isinstance(res, list) and len(res) > 0 and isinstance(res[0], dict) else str(res))
+        send_real_telegram_alert("⚠️ <b>COINDCX ORDER REJECTED!</b>\n• <b>Coin:</b> " + str(sym) + "\n• <b>Action:</b> " + str(act) + "\n• <b>Reason:</b> <code>" + str(err) + "</code>")
+        return False
+
+    t_now = datetime.now().strftime("%H:%M:%S")
+    trade_data = {
+        "coin": sym, "pair": pair, "action": act, "qty": qty,
+        "entry": entry, "sl": sl, "initial_sl": sl, "target": target,
+        "rrr": rrr, "risk_inr": RISK_AMOUNT_INR, "leverage": leverage,
+        "stage": "INITIAL", "date": today, "time": t_now, "order_id": oid
+    }
+    data["active"] = trade_data
+    data["daily_trades_count"] = data.get("daily_trades_count", 0) + 1
+    save_live_log(data)
+
+    act_name = "LONG (BUY)" if act == "LONG" else "SHORT (SELL)"
+    msg_lines = [
+        "🚀 <b>COINDCX REAL MONEY LIVE TRADE EXECUTED!</b> 🚀",
+        "",
+        "• <b>Coin:</b> " + str(sym),
+        "• <b>Action:</b> " + str(act_name),
+        "• <b>Quantity:</b> " + str(qty),
+        "• <b>Leverage:</b> " + str(leverage) + "x",
+        "• <b>Entry:</b> $" + str(entry),
+        "• <b>Stop Loss:</b> $" + str(sl),
+        "• <b>Target:</b> $" + str(target),
+        "• <b>RRR:</b> " + str(rrr),
+        "• <b>Risk:</b> ₹" + str(RISK_AMOUNT_INR) + " (Strictly 3%)",
+        "• <b>Order ID:</b> <code>" + str(oid) + "</code>",
+        "• <b>Today Trades:</b> " + str(data["daily_trades_count"]) + "/2",
+        "⏰ <b>Time:</b> " + str(t_now)
+    ]
+    send_real_telegram_alert("\n".join(msg_lines))
+
+    tpsl_ok, tpsl_res = attach_coindcx_tpsl(pair, sl, target)
+    if tpsl_ok:
+        send_real_telegram_alert("🛡️ <b>EXCHANGE TP/SL ATTACHED ON COINDCX!</b>\n• <b>SL:</b> $" + str(sl) + "\n• <b>TP:</b> $" + str(target))
+    else:
+        send_real_telegram_alert("⚠️ <b>TP/SL Attach Warning:</b> " + str(tpsl_res))
+
+    return True
+
+execute_real_smc_trade = execute_coindcx_live_trade
