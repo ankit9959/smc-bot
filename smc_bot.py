@@ -1121,3 +1121,88 @@ execute_real_smc_trade = execute_coindcx_live_trade
 
 # Ensure scanner always routes directly to the live CoinDCX execution
 execute_real_smc_trade = execute_coindcx_live_trade
+
+# === EXCHANGE-SIDE TP/SL, REAL EXIT & AVAX PRECISION FIX ===
+def calculate_lot_size(symbol, entry_price, sl_price):
+    try:
+        sl_diff = abs(float(entry_price) - float(sl_price))
+        if sl_diff <= 0: sl_diff = 1.0
+        risk_usdt = max(float(RISK_AMOUNT_INR) / 90.0, 0.35)
+        raw_qty = risk_usdt / sl_diff
+        min_qty_map = {
+            "BTCUSDT": 0.001, "ETHUSDT": 0.01, "SOLUSDT": 0.1,
+            "XRPUSDT": 1.0, "BNBUSDT": 0.01, "DOGEUSDT": 10.0,
+            "AVAXUSDT": 1.0, "NEARUSDT": 1.0
+        }
+        min_q = min_qty_map.get(symbol, 1.0)
+        qty = max(raw_qty, min_q)
+        dec_map = {
+            "BTCUSDT": 3, "ETHUSDT": 2, "SOLUSDT": 1,
+            "XRPUSDT": 0, "BNBUSDT": 2, "DOGEUSDT": 0,
+            "AVAXUSDT": 0, "NEARUSDT": 0
+        }
+        dec = dec_map.get(symbol, 0)
+        return round(qty, dec) if dec > 0 else int(round(qty))
+    except Exception:
+        return 1
+
+def attach_coindcx_tpsl(pair, sl_price, tp_price):
+    try:
+        import time
+        time.sleep(1.5)
+        pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20"})
+        pos_id = None
+        if isinstance(pos_list, list):
+            for p in pos_list:
+                if isinstance(p, dict) and p.get("pair") == pair and float(p.get("active_pos", 0)) != 0:
+                    pos_id = p.get("id")
+                    break
+        if not pos_id:
+            return False, "Position ID not found"
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": str(round(float(tp_price), 4)), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": str(round(float(sl_price), 4)), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
+def close_coindcx_position(pair):
+    try:
+        pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20"})
+        if isinstance(pos_list, list):
+            for p in pos_list:
+                if isinstance(p, dict) and p.get("pair") == pair and float(p.get("active_pos", 0)) != 0:
+                    pos_id = p.get("id")
+                    res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/exit", {"id": pos_id})
+                    return True, res
+        return False, "No active position"
+    except Exception as e:
+        return False, str(e)
+
+_orig_execute_coindcx_live_trade = execute_coindcx_live_trade
+def execute_coindcx_live_trade(setup):
+    ok = _orig_execute_coindcx_live_trade(setup)
+    if ok:
+        sym = setup.get("symbol", "")
+        clean_sym = sym.replace("USDT", "").replace("B-", "").replace("_", "")
+        pair = "B-" + clean_sym + "_USDT"
+        sl = setup.get("sl", 0)
+        target = setup.get("target", 0)
+        tpsl_ok, tpsl_res = attach_coindcx_tpsl(pair, sl, target)
+        if tpsl_ok:
+            send_real_telegram_alert("🛡️ <b>EXCHANGE TP/SL ATTACHED ON COINDCX!</b>\n• <b>SL:</b> $" + str(sl) + "\n• <b>TP:</b> $" + str(target))
+        else:
+            send_real_telegram_alert("⚠️ <b>TP/SL Attach Warning:</b> " + str(tpsl_res))
+    return ok
+
+execute_real_smc_trade = execute_coindcx_live_trade
+
+_orig_on_live_trade_closed = on_live_trade_closed
+def on_live_trade_closed(sym, outcome):
+    clean_sym = sym.replace("USDT", "").replace("B-", "").replace("_", "")
+    pair = "B-" + clean_sym + "_USDT"
+    close_coindcx_position(pair)
+    return _orig_on_live_trade_closed(sym, outcome)
