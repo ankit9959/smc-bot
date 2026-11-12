@@ -648,7 +648,7 @@ def scan_symbol_for_smc_setup(symbol, candles):
     entry_price = entry_candle["close"]
     c_range = max(1e-6, confirmed["high"] - confirmed["low"])
     swing_high, swing_low = struct["recent_high"], struct["recent_low"]
-    leg_candles = candles[-25:-1]
+    leg_candles = candles[-55:-1]
     leg_high, leg_low = max(c["high"] for c in leg_candles), min(c["low"] for c in leg_candles)
     leg_eq = (leg_high + leg_low) / 2.0
     fvgs = find_fvgs(candles[:-1], avg_range, leg_eq)
