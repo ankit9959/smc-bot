@@ -1320,3 +1320,87 @@ def execute_coindcx_live_trade(setup):
     return True
 
 execute_real_smc_trade = execute_coindcx_live_trade
+
+# === LIVE TRAILING SL + TRAILING TARGET ON COINDCX ===
+def update_coindcx_tpsl(pair, new_sl, new_tp):
+    try:
+        pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20"})
+        pos_id = None
+        if isinstance(pos_list, list):
+            for p in pos_list:
+                if isinstance(p, dict) and p.get("pair") == pair and float(p.get("active_pos", 0)) != 0:
+                    pos_id = p.get("id")
+                    break
+        if not pos_id:
+            return False, "No active position"
+        coindcx_private_request("/exchange/v1/derivatives/futures/positions/cancel_all_open_orders_for_position", {"id": pos_id})
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": str(round(float(new_tp), 4)), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": str(round(float(new_sl), 4)), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
+def check_and_trail_live_trade():
+    try:
+        data = load_live_log()
+        active = data.get("active")
+        if not active:
+            return
+        sym = active.get("coin")
+        pair = active.get("pair")
+        act = active.get("action")
+        entry = float(active.get("entry", 0))
+        init_sl = float(active.get("initial_sl", active.get("sl", 0)))
+        stage = active.get("stage", "INITIAL")
+        r_dist = abs(entry - init_sl)
+        if r_dist <= 0 or entry <= 0:
+            return
+
+        candles = get_coindcx_candles(sym, interval="1m", limit=2)
+        if not candles:
+            return
+        curr_price = float(candles[-1].get("close", 0))
+        if curr_price <= 0:
+            return
+
+        curr_r = ((curr_price - entry) / r_dist) if act == "LONG" else ((entry - curr_price) / r_dist)
+
+        new_stage, new_sl, new_tp = None, None, None
+        if curr_r >= 3.0 and stage not in ["TRAIL_3R"]:
+            new_stage = "TRAIL_3R"
+            new_sl = (entry + 2.0 * r_dist) if act == "LONG" else (entry - 2.0 * r_dist)
+            new_tp = (entry + 5.0 * r_dist) if act == "LONG" else (entry - 5.0 * r_dist)
+        elif curr_r >= 2.0 and stage not in ["TRAIL_2R", "TRAIL_3R"]:
+            new_stage = "TRAIL_2R"
+            new_sl = (entry + 1.0 * r_dist) if act == "LONG" else (entry - 1.0 * r_dist)
+            new_tp = (entry + 4.0 * r_dist) if act == "LONG" else (entry - 4.0 * r_dist)
+        elif curr_r >= 1.0 and stage == "INITIAL":
+            new_stage = "BE"
+            new_sl = entry
+            new_tp = (entry + 3.0 * r_dist) if act == "LONG" else (entry - 3.0 * r_dist)
+
+        if new_stage and new_sl is not None and new_tp is not None:
+            ok, res = update_coindcx_tpsl(pair, new_sl, new_tp)
+            if ok:
+                active["stage"] = new_stage
+                active["sl"] = new_sl
+                active["target"] = new_tp
+                data["active"] = active
+                save_live_log(data)
+                send_real_telegram_alert(
+                    "📈 <b>TRAILING SL & TARGET UPDATED!</b>\n"
+                    "• <b>Coin:</b> " + str(sym) + " (" + new_stage + ")\n"
+                    "• <b>New SL:</b> $" + str(round(new_sl, 4)) + "\n"
+                    "• <b>New Target:</b> $" + str(round(new_tp, 4))
+                )
+    except Exception:
+        pass
+
+_orig_run_master_scan_pass = run_master_scan_pass
+def run_master_scan_pass():
+    check_and_trail_live_trade()
+    return _orig_run_master_scan_pass()
