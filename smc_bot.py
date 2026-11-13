@@ -1404,3 +1404,7 @@ _orig_run_master_scan_pass = run_master_scan_pass
 def run_master_scan_pass():
     check_and_trail_live_trade()
     return _orig_run_master_scan_pass()
+
+# === USE VERIFIED NOV 7 SCANNER (+14.0R / 51 TRADES IN 5 DAYS) ===
+import smc_bot_ORIGINAL_SAFE_BACKUP as _nov7_scanner
+scan_symbol_for_smc_setup = _nov7_scanner.scan_symbol_for_smc_setup
