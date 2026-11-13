@@ -1408,3 +1408,63 @@ def run_master_scan_pass():
 # === USE VERIFIED NOV 7 SCANNER (+14.0R / 51 TRADES IN 5 DAYS) ===
 import smc_bot_ORIGINAL_SAFE_BACKUP as _nov7_scanner
 scan_symbol_for_smc_setup = _nov7_scanner.scan_symbol_for_smc_setup
+
+# === FIX INR FUTURES POSITION ID LOOKUP FOR AUTO TP/SL & EXIT ===
+def _find_inr_position_id(pair):
+    import time
+    for _ in range(3):
+        for body in [
+            {"page": "1", "size": "20", "margin_currency_short_name": ["INR"]},
+            {"page": "1", "size": "20"}
+        ]:
+            try:
+                pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", body)
+                if isinstance(pos_list, list):
+                    for p in pos_list:
+                        if isinstance(p, dict) and p.get("pair") == pair and float(p.get("active_pos", 0)) != 0:
+                            return p.get("id")
+            except Exception:
+                pass
+        time.sleep(2.5)
+    return None
+
+def attach_coindcx_tpsl(pair, sl_price, tp_price):
+    try:
+        pos_id = _find_inr_position_id(pair)
+        if not pos_id:
+            return False, "Position ID not found"
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": str(round(float(tp_price), 4)), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": str(round(float(sl_price), 4)), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
+def update_coindcx_tpsl(pair, new_sl, new_tp):
+    try:
+        pos_id = _find_inr_position_id(pair)
+        if not pos_id:
+            return False, "No active position"
+        coindcx_private_request("/exchange/v1/derivatives/futures/positions/cancel_all_open_orders_for_position", {"id": pos_id})
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": str(round(float(new_tp), 4)), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": str(round(float(new_sl), 4)), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
+def close_coindcx_position(pair):
+    try:
+        pos_id = _find_inr_position_id(pair)
+        if pos_id:
+            res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/exit", {"id": pos_id})
+            return True, res
+        return False, "No active position"
+    except Exception as e:
+        return False, str(e)
