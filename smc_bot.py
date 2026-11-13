@@ -1459,6 +1459,55 @@ def update_coindcx_tpsl(pair, new_sl, new_tp):
     except Exception as e:
         return False, str(e)
 
+
+def _round_coindcx_price(pair, price):
+    inc_map = {"B-BTC_USDT": 0.1, "B-ETH_USDT": 0.05, "B-SOL_USDT": 0.01, "B-BNB_USDT": 0.01, "B-AVAX_USDT": 0.01, "B-XRP_USDT": 0.0001, "B-DOGE_USDT": 0.00001, "B-NEAR_USDT": 0.001}
+    inc = inc_map.get(pair, 0.01)
+    try:
+        r = requests.get("https://api.coindcx.com/exchange/v1/derivatives/futures/data/instrument", params={"pair": pair, "margin_currency_short_name": "INR"}, timeout=5).json()
+        inst = r.get("instrument", r) if isinstance(r, dict) else {}
+        if inst.get("price_increment"):
+            inc = float(inst["price_increment"])
+    except Exception:
+        pass
+    dec = len(str(inc).split(".")[1]) if "." in str(inc) else 0
+    return str(round(round(float(price) / inc) * inc, dec))
+
+def attach_coindcx_tpsl(pair, sl_price, tp_price):
+    try:
+        pos_id = _find_inr_position_id(pair)
+        if not pos_id:
+            return False, "Position ID not found"
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": _round_coindcx_price(pair, tp_price), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": _round_coindcx_price(pair, sl_price), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        if isinstance(res, dict) and (res.get("code") or res.get("error") or ("message" in res and "success" not in str(res.get("message", "")).lower())):
+            return False, str(res)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
+def update_coindcx_tpsl(pair, new_sl, new_tp):
+    try:
+        pos_id = _find_inr_position_id(pair)
+        if not pos_id:
+            return False, "No active position"
+        coindcx_private_request("/exchange/v1/derivatives/futures/positions/cancel_all_open_orders_for_position", {"id": pos_id})
+        tpsl_payload = {
+            "id": pos_id,
+            "take_profit": {"stop_price": _round_coindcx_price(pair, new_tp), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": _round_coindcx_price(pair, new_sl), "order_type": "stop_market"}
+        }
+        res = coindcx_private_request("/exchange/v1/derivatives/futures/positions/create_tpsl", tpsl_payload)
+        if isinstance(res, dict) and (res.get("code") or res.get("error") or ("message" in res and "success" not in str(res.get("message", "")).lower())):
+            return False, str(res)
+        return True, res
+    except Exception as e:
+        return False, str(e)
+
 def close_coindcx_position(pair):
     try:
         pos_id = _find_inr_position_id(pair)
