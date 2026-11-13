@@ -1184,6 +1184,13 @@ def close_coindcx_position(pair):
 
 _orig_execute_coindcx_live_trade = execute_coindcx_live_trade
 def execute_coindcx_live_trade(setup):
+    try:
+        _pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20", "margin_currency_short_name": ["INR"]})
+        if isinstance(_pos_list, list) and any(isinstance(p, dict) and float(p.get("active_pos", 0) or 0) != 0 for p in _pos_list):
+            print("--> [SKIP] Live CoinDCX position already open")
+            return False
+    except Exception:
+        pass
     ok = _orig_execute_coindcx_live_trade(setup)
     if ok:
         sym = setup.get("symbol", "")
