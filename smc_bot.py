@@ -971,19 +971,6 @@ def run_master_scan_pass():
             print(f"Error scanning {sym}: {e}")
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Scan pass completed.")
 
-
-_final_orig_exec = execute_coindcx_live_trade
-def execute_coindcx_live_trade(setup):
-    try:
-        _pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20", "margin_currency_short_name": ["INR"]})
-        if isinstance(_pos_list, list) and any(isinstance(p, dict) and float(p.get("active_pos", 0) or 0) != 0 for p in _pos_list):
-            print("--> [SKIP] Live CoinDCX position already open")
-            return False
-    except Exception:
-        pass
-    return _final_orig_exec(setup)
-execute_real_smc_trade = execute_coindcx_live_trade
-
 if __name__ == "__main__":
     welcome = (
         "🚀 <b>SMC + IOC MASTER TRADING SYSTEM LIVE!</b> 🚀\n\n"
@@ -1537,3 +1524,16 @@ def close_coindcx_position(pair):
         return False, "No active position"
     except Exception as e:
         return False, str(e)
+
+
+_final_orig_exec = execute_coindcx_live_trade
+def execute_coindcx_live_trade(setup):
+    try:
+        _pos_list = coindcx_private_request("/exchange/v1/derivatives/futures/positions", {"page": "1", "size": "20", "margin_currency_short_name": ["INR"]})
+        if isinstance(_pos_list, list) and any(isinstance(p, dict) and float(p.get("active_pos", 0) or 0) != 0 for p in _pos_list):
+            print("--> [SKIP] Live CoinDCX position already open")
+            return False
+    except Exception:
+        pass
+    return _final_orig_exec(setup)
+execute_real_smc_trade = execute_coindcx_live_trade
