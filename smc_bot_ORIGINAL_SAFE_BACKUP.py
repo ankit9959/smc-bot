@@ -268,7 +268,7 @@ def evaluate_institutional_candles(candles, trend, swing_high, swing_low, avg_ra
         if current["low"] < swept_low and current["close"] >= swept_low:
             lower_wick = min(current["open"], current["close"]) - current["low"]
             if (lower_wick / c_range) >= 0.35 and current["close"] > current["open"]:
-                sl = current["low"] - avg_range * 1.0
+                sl = current["low"] - avg_range * 0.0
                 tp = swing_high
                 return {
                     "action": "LONG", "type": "IFC Candle Setup (Slide 9)",
@@ -281,7 +281,7 @@ def evaluate_institutional_candles(candles, trend, swing_high, swing_low, avg_ra
         if current["high"] > swept_high and current["close"] <= swept_high:
             upper_wick = current["high"] - max(current["open"], current["close"])
             if (upper_wick / c_range) >= 0.35 and current["close"] < current["open"]:
-                sl = current["high"] + avg_range * 1.0
+                sl = current["high"] + avg_range * 0.0
                 tp = swing_low
                 return {
                     "action": "SHORT", "type": "IFC Candle Setup (Slide 9)",
@@ -298,7 +298,7 @@ def evaluate_institutional_candles(candles, trend, swing_high, swing_low, avg_ra
         if b_range >= 1.75 * avg_range and (b_body / b_range) >= 0.60:
             if trend == "BULLISH" and brust_c["close"] < brust_c["open"]:
                 if current["close"] > current["open"]:
-                    sl = min(c["low"] for c in candles[-offset:]) - avg_range * 1.0
+                    sl = min(c["low"] for c in candles[-offset:]) - avg_range * 0.0
                     tp = swing_high
                     return {
                         "action": "LONG", "type": "Brust Candle Reversal (Slide 13)",
@@ -308,7 +308,7 @@ def evaluate_institutional_candles(candles, trend, swing_high, swing_low, avg_ra
                     }
             elif trend == "BEARISH" and brust_c["close"] > brust_c["open"]:
                 if current["close"] < current["open"]:
-                    sl = max(c["high"] for c in candles[-offset:]) + avg_range * 1.0
+                    sl = max(c["high"] for c in candles[-offset:]) + avg_range * 0.0
                     tp = swing_low
                     return {
                         "action": "SHORT", "type": "Brust Candle Reversal (Slide 13)",
@@ -416,6 +416,8 @@ def analyze_market_structure(candles):
 #                       MASTER SMC 146-SLIDE SCAN ENGINE
 # ==============================================================================
 def scan_symbol_for_smc_setup(symbol, candles):
+    if not candles or len(candles) < 55: return None
+    candles = candles[:-1]
     if len(candles) < 30: return None
     avg_range = get_avg_range(candles, 14)
     struct = analyze_market_structure(candles)
@@ -438,7 +440,7 @@ def scan_symbol_for_smc_setup(symbol, candles):
                 if current["low"] <= ob["high"] and current["close"] >= ob["low"]:
                     lower_wick = min(current["open"], current["close"]) - current["low"]
                     if (lower_wick / c_range) >= 0.20 and current["close"] > current["open"]:
-                        sl = min(ob["low"], current["low"]) - avg_range * 1.0
+                        sl = min(ob["low"], current["low"]) - avg_range * 0.0
                         tp = swing_high + avg_range * 0.20
                         rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
                         if rr >= MIN_RISK_REWARD:
@@ -447,15 +449,15 @@ def scan_symbol_for_smc_setup(symbol, candles):
         for f in fvgs:
             if f["type"] == "BULLISH" and not f["mitigated"] and f["bottom"] <= leg_eq:
                 if current["low"] <= f["ce"] and current["close"] >= f["bottom"] and current["close"] > current["open"]:
-                    sl = f["bottom"] - avg_range * 1.0
+                    sl = f["bottom"] - avg_range * 0.0
                     tp = swing_high + avg_range * 0.20
                     rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
                     if rr >= MIN_RISK_REWARD:
-                        return {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"FVG 50% CE Reversal ({f['size_class']} - Slide 48)", "slide": "Slide 48 (50% CE Mitigation) + Slide 43", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                        _skip = {"action": "LONG", "symbol": symbol, "trend": "BULLISH", "setup_name": f"FVG 50% CE Reversal ({f['size_class']} - Slide 48)", "slide": "Slide 48 (50% CE Mitigation) + Slide 43", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
 
         recent_low_12 = min(c["low"] for c in candles[-15:-1])
         if current["low"] < recent_low_12 and current["close"] > recent_low_12 and current["close"] > current["open"]:
-            sl = current["low"] - avg_range * 1.0
+            sl = current["low"] - avg_range * 0.0
             tp = swing_high + avg_range * 0.20
             rr = round((tp - current["close"]) / max(0.0001, (current["close"] - sl)), 2)
             if rr >= MIN_RISK_REWARD:
@@ -469,7 +471,7 @@ def scan_symbol_for_smc_setup(symbol, candles):
                 if current["high"] >= ob["low"] and current["close"] <= ob["high"]:
                     upper_wick = current["high"] - max(current["open"], current["close"])
                     if (upper_wick / c_range) >= 0.20 and current["close"] < current["open"]:
-                        sl = max(ob["high"], current["high"]) + avg_range * 1.0
+                        sl = max(ob["high"], current["high"]) + avg_range * 0.0
                         tp = swing_low - avg_range * 0.20
                         rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
                         if rr >= MIN_RISK_REWARD:
@@ -478,15 +480,15 @@ def scan_symbol_for_smc_setup(symbol, candles):
         for f in fvgs:
             if f["type"] == "BEARISH" and not f["mitigated"] and f["top"] >= leg_eq:
                 if current["high"] >= f["ce"] and current["close"] <= f["top"] and current["close"] < current["open"]:
-                    sl = f["top"] + avg_range * 1.0
+                    sl = f["top"] + avg_range * 0.0
                     tp = swing_low - avg_range * 0.20
                     rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
                     if rr >= MIN_RISK_REWARD:
-                        return {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"FVG 50% CE Reversal ({f['size_class']} - Slide 48)", "slide": "Slide 48 (50% CE Mitigation) + Slide 43", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
+                        _skip = {"action": "SHORT", "symbol": symbol, "trend": "BEARISH", "setup_name": f"FVG 50% CE Reversal ({f['size_class']} - Slide 48)", "slide": "Slide 48 (50% CE Mitigation) + Slide 43", "entry": current["close"], "sl": sl, "target": tp, "rrr": rr}
 
         recent_high_12 = max(c["high"] for c in candles[-15:-1])
         if current["high"] > recent_high_12 and current["close"] < recent_high_12 and current["close"] < current["open"]:
-            sl = current["high"] + avg_range * 1.0
+            sl = current["high"] + avg_range * 0.0
             tp = swing_low - avg_range * 0.20
             rr = round((current["close"] - tp) / max(0.0001, (sl - current["close"])), 2)
             if rr >= MIN_RISK_REWARD:
