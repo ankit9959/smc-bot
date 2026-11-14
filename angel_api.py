@@ -10,7 +10,7 @@ ORD_URL = f"{BASE}/rest/secure/angelbroking/order/v1/placeOrder"
 SCRIP_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
 _sess = {"jwt": None, "date": None}
-_auto_trade = _auto_trade
+_auto_trade = os.environ.get("ANGEL_AUTO_TRADE", "0") == "1"
 _scrip = {"date": None, "rows": []}
 
 def _totp(sec):
