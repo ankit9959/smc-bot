@@ -250,13 +250,14 @@ def run_1y_backtest():
         by_mon.setdefault(dt.strftime("%Y-%m"), []).append((dt, name, c1, pnl1))
 
     cap, added, wd_tot, tot_1l = 15000.0, 0.0, 0.0, 0.0
+    idx_cp = {"BANKNIFTY": 0.0, "FINNIFTY": 0.0, "NIFTY 50": 0.0}
     for ym in sorted(by_mon):
         lots = max(1, int(cap // 16000))
         m_1l, m_cp, m_add = 0.0, 0.0, 0.0
         for dt, name, c1, pnl1 in by_mon[ym]:
             m_1l += (pnl1 - 55.0)
             net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
-            cap += net; m_cp += net
+            cap += net; m_cp += net; idx_cp[name] += net
             if cap < 15000.0:
                 top = 15000.0 - cap
                 cap += top; added += top; m_add += top
