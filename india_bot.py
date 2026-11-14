@@ -14,6 +14,7 @@ INDICES = [
 _last_candle_ts = {}
 _daily_date = None
 _daily_count = 0
+_active_india = {}
 
 def send_india_telegram(msg):
     tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or DEFAULT_INDIA_TOKEN
@@ -30,6 +31,38 @@ def _ema(vals, n):
     for i in range(1, len(vals)): out[i] = vals[i] * k + out[i-1] * (1 - k)
     return out
 
+def _check_active_trades(name, live_price, now):
+    tr = _active_india.get(name)
+    if not tr:
+        return
+    mins = now.hour * 60 + now.minute
+    if mins >= 15*60 + 20:
+        send_india_telegram(f"<b>EOD EXIT (03:20 PM): {name} {tr['type']}</b>\nSpot: {live_price:.2f}\nClose Intraday Trade (No Overnight!)")
+        _active_india.pop(name, None)
+        return
+    if tr["type"] == "CE":
+        if live_price <= tr["sl"]:
+            msg = "1:1 Cost-to-Cost BE Exit" if tr["be_done"] else "SL Hit"
+            send_india_telegram(f"<b>{msg}: {name} CE</b>\nSpot: {live_price:.2f}")
+            _active_india.pop(name, None)
+        elif not tr["be_done"] and live_price >= tr["be"]:
+            tr["be_done"] = True; tr["sl"] = tr["entry"]
+            send_india_telegram(f"<b>1:1 REACHED (Move SL to Cost): {name} CE</b>\nSpot: {live_price:.2f} | New SL: {tr['entry']:.2f}")
+        elif live_price >= tr["tp"]:
+            send_india_telegram(f"<b>1:2 TARGET HIT: {name} CE</b>\nSpot: {live_price:.2f} | Book Full Profit!")
+            _active_india.pop(name, None)
+    else:
+        if live_price >= tr["sl"]:
+            msg = "1:1 Cost-to-Cost BE Exit" if tr["be_done"] else "SL Hit"
+            send_india_telegram(f"<b>{msg}: {name} PE</b>\nSpot: {live_price:.2f}")
+            _active_india.pop(name, None)
+        elif not tr["be_done"] and live_price <= tr["be"]:
+            tr["be_done"] = True; tr["sl"] = tr["entry"]
+            send_india_telegram(f"<b>1:1 REACHED (Move SL to Cost): {name} PE</b>\nSpot: {live_price:.2f} | New SL: {tr['entry']:.2f}")
+        elif live_price <= tr["tp"]:
+            send_india_telegram(f"<b>1:2 TARGET HIT: {name} PE</b>\nSpot: {live_price:.2f} | Book Full Profit!")
+            _active_india.pop(name, None)
+
 def scan_india_5m_ema():
     global _daily_date, _daily_count
     now = datetime.now(IST)
@@ -37,10 +70,7 @@ def scan_india_5m_ema():
         return
     today = now.date()
     if _daily_date != today:
-        _daily_date = today
-        _daily_count = 0
-    if _daily_count >= 1:
-        return
+        _daily_date = today; _daily_count = 0; _active_india.clear()
     mins = now.hour * 60 + now.minute
     if mins < 9*60 + 20 or mins > 15*60 + 25:
         return
@@ -51,6 +81,9 @@ def scan_india_5m_ema():
             q, ts = r["indicators"]["quote"][0], r["timestamp"]
             cd = [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]]
             if len(cd) < 210: continue
+            _check_active_trades(name, cd[-1]["c"], now)
+            if name in _active_india or _daily_count >= 4 or mins > 15*60 + 15:
+                continue
             cd = cd[:-1]
             cl = [x["c"] for x in cd]; e9 = _ema(cl,9); e21 = _ema(cl,21); e200 = _ema(cl,200)
             i = len(cd) - 1
@@ -71,8 +104,9 @@ def scan_india_5m_ema():
                 tp = entry + 2*risk if opt_type == "CE" else entry - 2*risk
                 atm = round(entry / step) * step
                 otm = (atm + step) if opt_type == "CE" else (atm - step)
+                _active_india[name] = {"type": opt_type, "entry": entry, "sl": sl, "be": be, "tp": tp, "be_done": False}
                 msg = (
-                    f"<b>INDIA 5M EMA (1/1 DAILY): {name} {opt_type}</b>\n"
+                    f"<b>INDIA 5M EMA ({_daily_count}/4): {name} {opt_type}</b>\n"
                     f"Spot Entry: {entry:.2f}\n"
                     f"Strike (1-OTM): {otm} {opt_type} (Lot {lot})\n"
                     f"Index SL: {sl:.2f}\n"
@@ -81,15 +115,14 @@ def scan_india_5m_ema():
                     f"Time: {now.strftime('%H:%M:%S')} IST"
                 )
                 send_india_telegram(msg)
-                break
         except Exception as e:
             print(f"India scan err {name}:", e)
 
 def run_india_loop():
-    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE</b>\nIndices: NIFTY 50 & FINNIFTY\nLimit: 1 Trade/Day | Time: 09:20-15:25 IST")
+    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: NIFTY 50 & FINNIFTY\nMax 4 Trades/Day | Live BE/TP/EOD 3:20 PM Alerts")
     while True:
         try:
             scan_india_5m_ema()
         except Exception as e:
             print("India loop err:", e)
-        time.sleep(60)
+        time.sleep(30)
