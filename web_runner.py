@@ -1,3 +1,4 @@
+import india_bot
 import os, threading, time
 from datetime import datetime, timezone, timedelta
 import requests
@@ -206,6 +207,7 @@ def start_bot_thread():
 
 if __name__ == '__main__':
     threading.Thread(target=start_bot_thread, daemon=True).start()
+    threading.Thread(target=india_bot.run_india_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
 @app.route('/api/live_test_trade')
