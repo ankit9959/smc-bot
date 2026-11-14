@@ -50,7 +50,17 @@ def _poll_tg_cmds():
             m = u.get("message", {})
             if str(m.get("chat", {}).get("id", "")) != cid: continue
             txt = m.get("text", "").strip().lower()
-            if txt.startswith("/bal") or txt.startswith("bal"):
+            if txt in ("/on", "on"):
+                angel_api._auto_trade = True
+                send_india_telegram("<b>AUTO-TRADE: ON 🟢</b>\nReal Angel One Orders Active!")
+            elif txt in ("/off", "off"):
+                angel_api._auto_trade = False
+                send_india_telegram("<b>AUTO-TRADE: OFF 🔴</b>\nPaper Mode Active")
+            elif txt in ("/status", "status"):
+                b = angel_api.get_balance()
+                m = "ON 🟢" if angel_api._auto_trade else "OFF 🔴 (Paper)"
+                send_india_telegram(f"<b>STATUS:</b> {m}\nBalance: ₹{b:,.2f}" if b is not None else f"<b>STATUS:</b> {m}")
+            elif txt.startswith("/bal") or txt.startswith("bal"):
                 parts = txt.replace("/bal", "").replace("bal", "").strip().split()
                 if parts and parts[0].replace(".", "", 1).isdigit(): _cap = float(parts[0])
                 real_b = angel_api.get_balance()

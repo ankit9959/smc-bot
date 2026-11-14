@@ -10,6 +10,7 @@ ORD_URL = f"{BASE}/rest/secure/angelbroking/order/v1/placeOrder"
 SCRIP_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
 _sess = {"jwt": None, "date": None}
+_auto_trade = _auto_trade
 _scrip = {"date": None, "rows": []}
 
 def _totp(sec):
@@ -73,7 +74,7 @@ def test_angel_login():
     _, err = ensure_login(force=True)
     if err: return f"Angel Err: {err}"
     bal = get_balance()
-    mode = "AUTO-ORDER ON" if os.environ.get("ANGEL_AUTO_TRADE", "0") == "1" else "PAPER MODE"
+    mode = "AUTO-ORDER ON" if _auto_trade else "PAPER MODE"
     return f"Angel One: CONNECTED ({mode})\nReal Balance: ₹{bal:,.2f}" if bal is not None else "Angel One: CONNECTED"
 
 def _load_scrips():
@@ -110,7 +111,7 @@ def get_ltp(sym, tok):
     except Exception: return None
 
 def place_order(sym, tok, qty, side):
-    if os.environ.get("ANGEL_AUTO_TRADE", "0") != "1":
+    if not _auto_trade:
         return False, "PAPER MODE (ANGEL_AUTO_TRADE=0)"
     ak, _, _, _, px = _cfg()
     jwt, err = ensure_login()
