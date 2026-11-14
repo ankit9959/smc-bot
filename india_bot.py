@@ -19,6 +19,9 @@ _active_india = {}
 _done_today = set()
 _cap = float(os.environ.get("INDIA_CAPITAL", "16000"))
 _upd_off = None
+_last_hb = 0.0
+_last_err = "None"
+_err_cd = {}
 
 def send_india_telegram(msg):
     tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or DEFAULT_INDIA_TOKEN
@@ -26,7 +29,7 @@ def send_india_telegram(msg):
     if not tok or not cid:
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "HTML", "reply_markup": {"keyboard": [[{"text": "🟢 Auto ON"}, {"text": "🔴 Auto OFF"}, {"text": "📊 Status"}], [{"text": "🧪 Test Strikes"}, {"text": "📈 1Y Backtest"}, {"text": "💰 Cap ₹15k"}], [{"text": "💰 Cap ₹35k"}, {"text": "✏️ Custom Cap"}]], "resize_keyboard": True}}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "HTML", "reply_markup": {"keyboard": [[{"text": "🟢 Auto ON"}, {"text": "🔴 Auto OFF"}, {"text": "📊 Status"}], [{"text": "🩺 Health Check"}, {"text": "🧪 Test Strikes"}, {"text": "📈 1Y Backtest"}], [{"text": "💰 Cap ₹15k"}, {"text": "💰 Cap ₹35k"}, {"text": "✏️ Custom Cap"}]], "resize_keyboard": True}}, timeout=10)
     except Exception as e:
         print("India TG err:", e)
 
@@ -71,6 +74,8 @@ def _poll_tg_cmds():
                     except Exception as ex:
                         out.append(f"{nm}: ERR {ex}")
                 send_india_telegram("\n".join(out))
+            elif txt in ("/health", "health", "🩺 health check"):
+                send_india_telegram(_health_report())
             elif txt in ("/status", "status", "📊 status"):
                 b = angel_api.get_balance()
                 m = "ON 🟢" if angel_api._auto_trade else "OFF 🔴 (Paper)"
@@ -99,7 +104,8 @@ def _close_trade(name, tr, live_price, title):
     ord_note = ""
     if tr.get("opt_sym") and tr.get("opt_tok"):
         ok, res = angel_api.place_order(tr["opt_sym"], tr["opt_tok"], qty, "SELL")
-        ord_note = f"\nOrder SELL: {'ID ' + str(res) if ok else res}"
+        if not ok and angel_api._auto_trade: _alert_err(f"SELL_{name}", res)
+    ord_note = f"\nOrder SELL: {'ID ' + str(res) if ok else res}"
     res_r = ((live_price - tr["entry"]) if tr["type"] == "CE" else (tr["entry"] - live_price)) / tr["risk"]
     mins_held = max(5.0, (time.time() - tr["entry_ts"]) / 60.0)
     net = (res_r * tr["risk"] * 0.35 * qty) - ((mins_held / 5.0) * 0.15 * qty) - (55.0 + 10.0 * (tr["lots"] - 1))
@@ -108,6 +114,40 @@ def _close_trade(name, tr, live_price, title):
     bal_str = f"₹{real_b:,.2f}" if real_b is not None else f"₹{_cap:,.0f}"
     send_india_telegram(f"<b>{title}: {name} {tr['type']} ({tr['lots']}L)</b>\nSpot: {live_price:.2f} | Wallet: {bal_str}{ord_note}")
     _active_india.pop(name, None)
+
+def _alert_err(key, msg):
+    global _last_err
+    _last_err = f"{key}: {msg}"
+    now_ts = time.time()
+    if now_ts - _err_cd.get(key, 0) >= 300:
+        _err_cd[key] = now_ts
+        send_india_telegram(f"⚠️ <b>BOT ERROR ({key}):</b>\n{msg}")
+
+def _health_report():
+    lines = ["🩺 <b>A-TO-Z HEALTH CHECK:</b>"]
+    _, err = angel_api.ensure_login()
+    lines.append(f"1. Angel Login & IP: {'OK ✅' if not err else 'ERR ❌ ' + str(err)}")
+    b = angel_api.get_balance()
+    lines.append(f"2. Broker Balance: {f'₹{b:,.2f} ✅' if b is not None else 'ERR ❌'}")
+    c_ok, s_ok = [], []
+    for nm, sym, lot, step, pr in INDICES:
+        try:
+            cd, src = _get_candles(nm, sym)
+            sp = cd[-1]["c"]
+            c_ok.append(f"{nm[:2]}:{src}({len(cd)})")
+            atm = round(sp / step) * step
+            osym, _, _, ltp = angel_api.find_option_by_price(nm, atm, step, "CE", pr[0], pr[1])
+            s_ok.append(f"{nm[:2]}:₹{ltp}" if osym and ltp else f"{nm[:2]}:❌")
+        except Exception:
+            c_ok.append(f"{nm[:2]}:❌"); s_ok.append(f"{nm[:2]}:❌")
+    lines.append("3. Candles: " + " | ".join(c_ok))
+    lines.append("4. Strikes: " + " | ".join(s_ok))
+    m = "ON 🟢" if angel_api._auto_trade else "OFF 🔴"
+    lines.append(f"5. Auto: {m} | Cap: ₹{_cap:,.0f} | Today: {_daily_count}/3")
+    act = ", ".join(f"{k}(SL:{v['sl']:.1f})" for k, v in _active_india.items()) or "None"
+    lines.append(f"6. Active Trades: {act}")
+    lines.append(f"7. Last Error: {_last_err}")
+    return "\n".join(lines)
 
 def _get_candles(name, sym):
     cd = angel_api.get_5m_candles(name)
@@ -143,6 +183,11 @@ def scan_india_5m_ema():
         _daily_date = today; _daily_count = 0; _active_india.clear(); _done_today.clear()
     mins = now.hour * 60 + now.minute
     if mins < 9*60 + 20 or mins > 15*60 + 25: return
+    global _last_hb
+    if time.time() - _last_hb >= 900:
+        _last_hb = time.time()
+        act = ", ".join(f"{k}(SL:{v['sl']:.1f})" for k, v in _active_india.items()) or "Scanning"
+        send_india_telegram(f"📡 <b>15m LIVE SCAN OK ({now.strftime('%H:%M')} IST)</b>\nTrades: {_daily_count}/3 | Status: {act} | Err: {_last_err}")
     for name, sym, lot, step, pr in INDICES:
         try:
             cd, _ = _get_candles(name, sym)
@@ -176,8 +221,10 @@ def scan_india_5m_ema():
                     continue
                 qty = lots * lot_use
                 ord_msg = "No Contract"
+                if not opt_sym: _alert_err(f"STRIKE_{name}", f"No contract found near {atm}")
                 if opt_sym and opt_tok:
                     ok, res = angel_api.place_order(opt_sym, opt_tok, qty, "BUY")
+                    if not ok and angel_api._auto_trade: _alert_err(f"BUY_{name}", res)
                     ord_msg = f"BUY ID {res}" if ok else res
                 _daily_count += 1; _done_today.add(name)
                 be = entry + risk if opt_type == "CE" else entry - risk
@@ -185,7 +232,7 @@ def scan_india_5m_ema():
                 ltp_s = f"₹{opt_ltp:.2f}" if opt_ltp else "N/A"
                 send_india_telegram(f"<b>INDIA 5M EMA ({_daily_count}/3): {name} {opt_type}</b>\nContract: {opt_sym or atm} | LTP: {ltp_s}\nLots: {lots} ({qty} Qty) | Bal: ₹{bal:,.0f}\nSpot: {entry:.2f} | SL: {sl:.2f} | BE: {be:.2f}\nOrder: {ord_msg}")
         except Exception as e:
-            print(f"India scan err {name}:", e)
+            print(f"India scan err {name}:", e); _alert_err(f"SCAN_{name}", str(e))
 
 def run_india_loop():
     _poll_tg_cmds()
@@ -195,5 +242,5 @@ def run_india_loop():
         try:
             _poll_tg_cmds()
             scan_india_5m_ema()
-        except Exception as e: print("India loop err:", e)
+        except Exception as e: print("India loop err:", e); _alert_err("LOOP", str(e))
         time.sleep(30)
