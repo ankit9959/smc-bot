@@ -68,7 +68,8 @@ def scan_india_5m_ema():
             cd = [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]]
             if len(cd) < 210: continue
             _check_active_trades(name, cd[-1]["c"], now)
-            if name in _active_india or name in _done_today or _daily_count >= 3 or mins > 15*60 + 15: continue
+            in_win = (9*60+20 <= mins < 10*60+30) or (13*60+30 <= mins < 15*60+15)
+            if name in _active_india or name in _done_today or _daily_count >= 3 or not in_win: continue
             cd = cd[:-1]; cl = [x["c"] for x in cd]
             e9, e21, e200 = _ema(cl, 9), _ema(cl, 21), _ema(cl, 200)
             i = len(cd) - 1
@@ -92,7 +93,7 @@ def scan_india_5m_ema():
             print(f"India scan err {name}:", e)
 
 def run_india_loop():
-    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY, FINNIFTY, NIFTY 50\nDays: Tue / Wed / Fri Only (No Mon/Thu)\nMax 1 Each/Day (3/Day) | Full Step Trail + 3:20 PM EOD")
+    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY, FINNIFTY, NIFTY 50\nDays: Tue / Wed / Fri Only (No Mon/Thu)\n09:20-10:30 & 13:30-15:15 | Full Trail + 3:20 PM EOD")
     while True:
         try: scan_india_5m_ema()
         except Exception as e: print("India loop err:", e)
