@@ -7,7 +7,7 @@ HDR = {"User-Agent": "Mozilla/5.0"}
 DEFAULT_INDIA_TOKEN = "9172379674:AAG_8SVUycnOtWkDTNYnPt9-BQBSy1HXaOY"
 
 INDICES = [
-    ("NIFTY 50", "%5ENSEI", 65, 50),
+    ("BANKNIFTY", "%5ENSEBANK", 30, 100),
     ("FINNIFTY", "NIFTY_FIN_SERVICE.NS", 60, 50),
 ]
 
@@ -15,6 +15,7 @@ _last_candle_ts = {}
 _daily_date = None
 _daily_count = 0
 _active_india = {}
+_done_today = set()
 
 def send_india_telegram(msg):
     tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or DEFAULT_INDIA_TOKEN
@@ -70,7 +71,7 @@ def scan_india_5m_ema():
         return
     today = now.date()
     if _daily_date != today:
-        _daily_date = today; _daily_count = 0; _active_india.clear()
+        _daily_date = today; _daily_count = 0; _active_india.clear(); _done_today.clear()
     mins = now.hour * 60 + now.minute
     if mins < 9*60 + 20 or mins > 15*60 + 25:
         return
@@ -82,7 +83,7 @@ def scan_india_5m_ema():
             cd = [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]]
             if len(cd) < 210: continue
             _check_active_trades(name, cd[-1]["c"], now)
-            if name in _active_india or _daily_count >= 4 or mins > 15*60 + 15:
+            if name in _active_india or name in _done_today or _daily_count >= 2 or mins > 15*60 + 15:
                 continue
             cd = cd[:-1]
             cl = [x["c"] for x in cd]; e9 = _ema(cl,9); e21 = _ema(cl,21); e200 = _ema(cl,200)
@@ -99,14 +100,14 @@ def scan_india_5m_ema():
                 entry = cl[i]; risk = abs(entry - sl)
                 if risk <= 0 or risk / entry < 0.0005 or risk / entry > 0.01:
                     continue
-                _daily_count += 1
+                _daily_count += 1; _done_today.add(name)
                 be = entry + risk if opt_type == "CE" else entry - risk
                 tp = entry + 2*risk if opt_type == "CE" else entry - 2*risk
                 atm = round(entry / step) * step
                 otm = (atm + step) if opt_type == "CE" else (atm - step)
                 _active_india[name] = {"type": opt_type, "entry": entry, "sl": sl, "be": be, "tp": tp, "be_done": False}
                 msg = (
-                    f"<b>INDIA 5M EMA ({_daily_count}/4): {name} {opt_type}</b>\n"
+                    f"<b>INDIA 5M EMA ({_daily_count}/2): {name} {opt_type}</b>\n"
                     f"Spot Entry: {entry:.2f}\n"
                     f"Strike (1-OTM): {otm} {opt_type} (Lot {lot})\n"
                     f"Index SL: {sl:.2f}\n"
@@ -119,7 +120,7 @@ def scan_india_5m_ema():
             print(f"India scan err {name}:", e)
 
 def run_india_loop():
-    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: NIFTY 50 & FINNIFTY\nMax 4 Trades/Day | Live BE/TP/EOD 3:20 PM Alerts")
+    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY & FINNIFTY\nMax 1 Each/Day (2/Day) | Live BE/TP/EOD 3:20 PM Alerts")
     while True:
         try:
             scan_india_5m_ema()
