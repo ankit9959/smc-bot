@@ -1,5 +1,5 @@
 DEFAULT_INDIA_TOKEN = "9172379674:AAG_8SVUycnOtWkDTNYnPt9-BQBSy1HXaOY"
-import os, time, requests
+import os, time, requests, threading
 from datetime import datetime, timezone, timedelta
 import smc_bot, angel_api
 
@@ -56,6 +56,9 @@ def _poll_tg_cmds():
             elif txt in ("/off", "off"):
                 angel_api._auto_trade = False
                 send_india_telegram("<b>AUTO-TRADE: OFF 🔴</b>\nPaper Mode Active")
+            elif txt in ("/bt1y", "bt1y"):
+                send_india_telegram("Running 1-Year Angel Backtest (~20s)...")
+                threading.Thread(target=lambda: send_india_telegram(angel_api.run_1y_backtest()), daemon=True).start()
             elif txt in ("/test", "test"):
                 out = ["<b>ANGEL CONTRACT TEST:</b>"]
                 for nm, sym, lot, step, pr in INDICES:

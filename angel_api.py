@@ -180,3 +180,101 @@ def get_5m_candles(idx_name):
         return [{"t": int(datetime.fromisoformat(x[0]).timestamp()), "h": float(x[2]), "l": float(x[3]), "c": float(x[4])} for x in rows]
     except Exception:
         return None
+
+def fetch_1y_5m(idx_name):
+    tok = IDX_TOKS.get(idx_name)
+    if not tok: return []
+    ak, _, _, _, px = _cfg()
+    jwt, _ = ensure_login()
+    if not jwt: return []
+    end = datetime.now(IST)
+    all_rows, seen = [], set()
+    for k in range(12, 0, -1):
+        f_dt = end - timedelta(days=k * 30)
+        t_dt = end - timedelta(days=(k - 1) * 30)
+        p = {"exchange": "NSE", "symboltoken": tok, "interval": "FIVE_MINUTE", "fromdate": f_dt.strftime("%Y-%m-%d 09:15"), "todate": t_dt.strftime("%Y-%m-%d 15:30")}
+        try:
+            r = requests.post(CANDLE_URL, headers=_hdr(ak, jwt), json=p, proxies=px, timeout=15).json()
+            for x in (r.get("data") or []):
+                ts = int(datetime.fromisoformat(x[0]).timestamp())
+                if ts not in seen:
+                    seen.add(ts)
+                    all_rows.append((datetime.fromtimestamp(ts, IST), float(x[2]), float(x[3]), float(x[4])))
+        except Exception: pass
+        time.sleep(0.4)
+    all_rows.sort(key=lambda z: z[0])
+    out, e9, e21, e200 = [], None, None, None
+    for dt, h, l, c in all_rows:
+        e9 = c if e9 is None else c * 0.2 + e9 * 0.8
+        e21 = c if e21 is None else c * (2/22) + e21 * (20/22)
+        e200 = c if e200 is None else c * (2/201) + e200 * (199/201)
+        out.append((dt, h, l, c, e9, e21, e200))
+    return out
+
+def run_1y_backtest():
+    idxs = [("BANKNIFTY", 30, 8250), ("FINNIFTY", 60, 8250), ("NIFTY 50", 65, 8125)]
+    lines, evs, tot_1l, tot_t = ["<b>1-YEAR BACKTEST (ANGEL 5m):</b>"], [], 0.0, 0
+    mon_1l = {}
+    for name, lot, c1 in idxs:
+        rows = fetch_1y_5m(name)
+        if len(rows) < 250:
+            lines.append(f"{name}: Data Err ({len(rows)})"); continue
+        done, tot, w, s, n = set(), 0.0, 0, 0, 0
+        for i in range(200, len(rows) - 1):
+            dt, hi, lo, c, e9, e21, e200 = rows[i]
+            day, t = dt.date(), dt.strftime("%H:%M")
+            if dt.weekday() in (0, 3) or day in done or not (("09:20" <= t < "10:30") or ("13:30" <= t < "15:15")): continue
+            p9, p21 = rows[i-1][4], rows[i-1][5]
+            sig = "CE" if p9 <= p21 and e9 > e21 and c > e200 else ("PE" if p9 >= p21 and e9 < e21 and c < e200 else None)
+            if not sig: continue
+            sl = min(x[2] for x in rows[i-4:i+1]) if sig == "CE" else max(x[1] for x in rows[i-4:i+1])
+            risk = (c - sl) if sig == "CE" else (sl - c)
+            if risk <= 0: continue
+            sl_r, res_r, end_j = -1.0, 0.0, i
+            for j in range(i + 1, len(rows)):
+                if rows[j][0].date() != day: break
+                end_j = j
+                dtj, hj, lj, cj = rows[j][:4]
+                lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
+                hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
+                cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+                if lo_r <= sl_r: res_r = sl_r; break
+                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if dtj.strftime("%H:%M") >= "15:20": res_r = cl_r; break
+            else:
+                cj = rows[end_j][3]
+                res_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+            pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
+            net1 = pnl1 - 55.0
+            done.add(day); tot += net1; n += 1
+            ym = dt.strftime("%Y-%m")
+            mon_1l[ym] = mon_1l.get(ym, 0.0) + net1
+            if res_r > 0: w += 1
+            elif res_r <= -1.0: s += 1
+            evs.append((dt, 0, name, c1, pnl1))
+            evs.append((rows[end_j][0], 1, name, c1, pnl1))
+        tot_1l += tot; tot_t += n
+        lines.append(f"{name}: {n}T ({w}W/{s}SL) | ₹{tot:+,.0f}")
+    cap = low_c = 15000.0
+    used, act, mon_cp, taken, skip = 0.0, {}, {}, 0, 0
+    for dt, typ, name, c1, pnl1 in sorted(evs, key=lambda x: (x[0], -x[1])):
+        if typ == 0:
+            free = cap - used
+            lots = min(max(1, int(cap // 16000)), int(free // c1)) if free >= c1 else 0
+            if lots > 0: used += lots * c1; act[name] = (lots, lots * c1, pnl1)
+            else: skip += 1
+        elif name in act:
+            lots, mu, p1 = act.pop(name); used -= mu
+            net = (p1 * lots) - (55.0 + 10.0 * (lots - 1))
+            cap += net; low_c = min(low_c, cap); taken += 1
+            ym = dt.strftime("%Y-%m")
+            mon_cp[ym] = mon_cp.get(ym, 0.0) + net
+    lines.append("\n<b>MONTH-WISE (1-Lot vs ₹15k Comp):</b>")
+    bal_m = 15000.0
+    for ym in sorted(set(list(mon_1l) + list(mon_cp))):
+        m1, mc = mon_1l.get(ym, 0.0), mon_cp.get(ym, 0.0)
+        bal_m += mc
+        lines.append(f"{ym} | 1L: ₹{m1:+,.0f} | Comp: ₹{mc:+,.0f} (Bal ₹{bal_m:,.0f})")
+    lines.append(f"\n<b>1L Total ({tot_t}T):</b> ₹{tot_1l:+,.0f}")
+    lines.append(f"<b>₹15k Comp ({taken}T/{skip}Skip):</b> Low ₹{low_c:,.0f} -> END ₹{cap:,.0f}")
+    return "\n".join(lines)
