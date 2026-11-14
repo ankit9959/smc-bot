@@ -1,3 +1,4 @@
+DEFAULT_INDIA_TOKEN = "9172379674:AAG_8SVUycnOtWkDTNYnPt9-BQBSy1HXaOY"
 import os, time, requests
 from datetime import datetime, timezone, timedelta
 import smc_bot
