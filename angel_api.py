@@ -267,6 +267,7 @@ def run_1y_backtest():
         extra = (f" | +Add ₹{m_add:,.0f}" if m_add > 0 else "") + (f" | -20% ₹{wd:,.0f}" if wd > 0 else "")
         lines.append(f"{ym} ({lots}L) | Cp: ₹{m_cp:+,.0f}{extra} | Bal ₹{cap:,.0f}")
 
+    lines.append("\n<b>Comp By Index:</b> " + " | ".join(f"{k}: ₹{v:+,.0f}" for k, v in idx_cp.items()))
     inv = 15000.0 + added
     lines.append(f"\n<b>1-Lot Fixed Total:</b> ₹{tot_1l:+,.0f}")
     lines.append(f"<b>Total Invested:</b> ₹15,000 + ₹{added:,.0f} = ₹{inv:,.0f}")
