@@ -213,13 +213,11 @@ def fetch_1y_5m(idx_name):
 
 def run_1y_backtest():
     idxs = [("BANKNIFTY", 30, 8250), ("FINNIFTY", 60, 8250), ("NIFTY 50", 65, 8125)]
-    lines, evs, tot_1l, tot_t = ["<b>1-YEAR BACKTEST (ANGEL 5m):</b>"], [], 0.0, 0
-    mon_1l = {}
+    lines, evs = ["<b>1-YEAR MONTHLY COMPOUNDING (₹15k Start):</b>"], []
     for name, lot, c1 in idxs:
         rows = fetch_1y_5m(name)
-        if len(rows) < 250:
-            lines.append(f"{name}: Data Err ({len(rows)})"); continue
-        done, tot, w, s, n = set(), 0.0, 0, 0, 0
+        if len(rows) < 250: continue
+        done = set()
         for i in range(200, len(rows) - 1):
             dt, hi, lo, c, e9, e21, e200 = rows[i]
             day, t = dt.date(), dt.strftime("%H:%M")
@@ -245,36 +243,30 @@ def run_1y_backtest():
                 cj = rows[end_j][3]
                 res_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
             pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-            net1 = pnl1 - 55.0
-            done.add(day); tot += net1; n += 1
-            ym = dt.strftime("%Y-%m")
-            mon_1l[ym] = mon_1l.get(ym, 0.0) + net1
-            if res_r > 0: w += 1
-            elif res_r <= -1.0: s += 1
-            evs.append((dt, 0, name, c1, pnl1))
-            evs.append((rows[end_j][0], 1, name, c1, pnl1))
-        tot_1l += tot; tot_t += n
-        lines.append(f"{name}: {n}T ({w}W/{s}SL) | ₹{tot:+,.0f}")
-    cap = low_c = 15000.0
-    used, act, mon_cp, taken, skip = 0.0, {}, {}, 0, 0
-    for dt, typ, name, c1, pnl1 in sorted(evs, key=lambda x: (x[0], -x[1])):
-        if typ == 0:
-            free = cap - used
-            lots = min(max(1, int(cap // 16000)), int(free // c1)) if free >= c1 else 0
-            if lots > 0: used += lots * c1; act[name] = (lots, lots * c1, pnl1)
-            else: skip += 1
-        elif name in act:
-            lots, mu, p1 = act.pop(name); used -= mu
-            net = (p1 * lots) - (55.0 + 10.0 * (lots - 1))
-            cap += net; low_c = min(low_c, cap); taken += 1
-            ym = dt.strftime("%Y-%m")
-            mon_cp[ym] = mon_cp.get(ym, 0.0) + net
-    lines.append("\n<b>MONTH-WISE (1-Lot vs ₹15k Comp):</b>")
-    bal_m = 15000.0
-    for ym in sorted(set(list(mon_1l) + list(mon_cp))):
-        m1, mc = mon_1l.get(ym, 0.0), mon_cp.get(ym, 0.0)
-        bal_m += mc
-        lines.append(f"{ym} | 1L: ₹{m1:+,.0f} | Comp: ₹{mc:+,.0f} (Bal ₹{bal_m:,.0f})")
-    lines.append(f"\n<b>1L Total ({tot_t}T):</b> ₹{tot_1l:+,.0f}")
-    lines.append(f"<b>₹15k Comp ({taken}T/{skip}Skip):</b> Low ₹{low_c:,.0f} -> END ₹{cap:,.0f}")
+            done.add(day); evs.append((dt, name, c1, pnl1))
+
+    by_mon = {}
+    for dt, name, c1, pnl1 in sorted(evs):
+        by_mon.setdefault(dt.strftime("%Y-%m"), []).append((dt, name, c1, pnl1))
+
+    cap, added, tot_1l = 15000.0, 0.0, 0.0
+    for ym in sorted(by_mon):
+        lots = max(1, int(cap // 16000))
+        m_1l, m_cp, m_add = 0.0, 0.0, 0.0
+        for dt, name, c1, pnl1 in by_mon[ym]:
+            m_1l += (pnl1 - 55.0)
+            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+            cap += net; m_cp += net
+            if cap < 15000.0:
+                top = 15000.0 - cap
+                cap += top; added += top; m_add += top
+        tot_1l += m_1l
+        add_s = f" | +Add ₹{m_add:,.0f}" if m_add > 0 else ""
+        lines.append(f"{ym} ({lots}L) | 1L: ₹{m_1l:+,.0f} | Cp: ₹{m_cp:+,.0f}{add_s} | Bal ₹{cap:,.0f}")
+
+    inv = 15000.0 + added
+    lines.append(f"\n<b>1-Lot Fixed Total:</b> ₹{tot_1l:+,.0f}")
+    lines.append(f"<b>Total Invested:</b> ₹15,000 + ₹{added:,.0f} = ₹{inv:,.0f}")
+    lines.append(f"<b>Final Balance:</b> ₹{cap:,.0f}")
+    lines.append(f"<b>TRUE NET PROFIT: ₹{cap - inv:+,.0f}</b>")
     return "\n".join(lines)
