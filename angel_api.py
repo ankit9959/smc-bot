@@ -1,7 +1,16 @@
 import os, time, hmac, hashlib, struct, base64, requests
+from datetime import datetime, timezone, timedelta
 
-LOGIN_URL = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
-RMS_URL = "https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/getRMS"
+IST = timezone(timedelta(hours=5, minutes=30))
+BASE = "https://apiconnect.angelone.in"
+LOGIN_URL = f"{BASE}/rest/auth/angelbroking/user/v1/loginByPassword"
+RMS_URL = f"{BASE}/rest/secure/angelbroking/user/v1/getRMS"
+LTP_URL = f"{BASE}/order-service/rest/secure/angelbroking/order/v1/getLtpData"
+ORD_URL = f"{BASE}/rest/secure/angelbroking/order/v1/placeOrder"
+SCRIP_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+
+_sess = {"jwt": None, "date": None}
+_scrip = {"date": None, "rows": []}
 
 def _totp(sec):
     s = sec.replace(" ", "").upper()
@@ -12,32 +21,112 @@ def _totp(sec):
     o = h[-1] & 0x0F
     return f"{(struct.unpack('>I', h[o:o+4])[0] & 0x7FFFFFFF) % 1000000:06d}"
 
-def _hdr(api_key, jwt=None):
+def _cfg():
+    px = os.environ.get("STATIC_PROXY_URL", "").strip()
+    return (
+        os.environ.get("ANGEL_API_KEY", "").strip(),
+        os.environ.get("ANGEL_CLIENT_CODE", "").strip(),
+        os.environ.get("ANGEL_PIN", "").strip(),
+        os.environ.get("ANGEL_TOTP_SECRET", "").strip(),
+        {"http": px, "https": px} if px else None,
+    )
+
+def _hdr(ak, jwt=None):
     h = {
         "Content-Type": "application/json", "Accept": "application/json",
         "X-UserType": "USER", "X-SourceID": "WEB",
         "X-ClientLocalIP": "127.0.0.1", "X-ClientPublicIP": "185.155.223.42",
-        "X-MACAddress": "00:00:00:00:00:00", "X-PrivateKey": api_key,
+        "X-MACAddress": "00:00:00:00:00:00", "X-PrivateKey": ak,
     }
     if jwt: h["Authorization"] = f"Bearer {jwt}"
     return h
 
-def test_angel_login():
-    ak = os.environ.get("ANGEL_API_KEY", "").strip()
-    cc = os.environ.get("ANGEL_CLIENT_CODE", "").strip()
-    pin = os.environ.get("ANGEL_PIN", "").strip()
-    totp_sec = os.environ.get("ANGEL_TOTP_SECRET", "").strip()
-    px = os.environ.get("STATIC_PROXY_URL", "").strip()
-    if not all([ak, cc, pin, totp_sec, px]):
-        return "Angel One: Env vars missing"
-    proxies = {"http": px, "https": px}
+def ensure_login(force=False):
+    ak, cc, pin, totp_sec, px = _cfg()
+    if not all([ak, cc, pin, totp_sec, px]): return None, "Env vars missing"
+    today = datetime.now(IST).date()
+    if not force and _sess["jwt"] and _sess["date"] == today:
+        return _sess["jwt"], None
     try:
-        r = requests.post(LOGIN_URL, headers=_hdr(ak), json={"clientcode": cc, "password": pin, "totp": _totp(totp_sec), "state": "live"}, proxies=proxies, timeout=15).json()
-        if not r.get("status"):
-            return f"Angel Login Err: {r.get('message', r)}"
-        jwt = r["data"]["jwtToken"]
-        rms = requests.get(RMS_URL, headers=_hdr(ak, jwt), proxies=proxies, timeout=15).json()
-        net = float(rms.get("data", {}).get("net", 0))
-        return f"Angel One: CONNECTED (Static IP)\nReal Balance: ₹{net:,.2f}"
+        r = requests.post(LOGIN_URL, headers=_hdr(ak), json={"clientcode": cc, "password": pin, "totp": _totp(totp_sec), "state": "live"}, proxies=px, timeout=15).json()
+        if not r.get("status"): return None, r.get("message", str(r))
+        _sess["jwt"], _sess["date"] = r["data"]["jwtToken"], today
+        return _sess["jwt"], None
     except Exception as e:
-        return f"Angel Conn Err: {e}"
+        return None, str(e)
+
+def get_balance():
+    ak, _, _, _, px = _cfg()
+    jwt, err = ensure_login()
+    if not jwt: return None
+    try:
+        r = requests.get(RMS_URL, headers=_hdr(ak, jwt), proxies=px, timeout=15).json()
+        if not r.get("status"):
+            jwt, _ = ensure_login(force=True)
+            if not jwt: return None
+            r = requests.get(RMS_URL, headers=_hdr(ak, jwt), proxies=px, timeout=15).json()
+        d = r.get("data", {})
+        return float(d.get("availablecash") or d.get("net") or 0)
+    except Exception: return None
+
+def test_angel_login():
+    _, err = ensure_login(force=True)
+    if err: return f"Angel Err: {err}"
+    bal = get_balance()
+    mode = "AUTO-ORDER ON" if os.environ.get("ANGEL_AUTO_TRADE", "0") == "1" else "PAPER MODE"
+    return f"Angel One: CONNECTED ({mode})\nReal Balance: ₹{bal:,.2f}" if bal is not None else "Angel One: CONNECTED"
+
+def _load_scrips():
+    today = datetime.now(IST).date()
+    if _scrip["date"] == today and _scrip["rows"]: return _scrip["rows"]
+    raw = requests.get(SCRIP_URL, timeout=25).json()
+    _scrip["rows"] = [x for x in raw if x.get("exch_seg") == "NFO" and x.get("instrumenttype") == "OPTIDX" and x.get("name") in ("NIFTY", "BANKNIFTY", "FINNIFTY")]
+    _scrip["date"] = today
+    return _scrip["rows"]
+
+def find_option(idx_name, strike, opt_type):
+    nm = "NIFTY" if "NIFTY 50" in idx_name else idx_name
+    today = datetime.now(IST).date()
+    cands = []
+    for x in _load_scrips():
+        if x.get("name") != nm or not x.get("symbol", "").endswith(opt_type): continue
+        try:
+            if round(float(x["strike"]) / 100) != strike: continue
+            exp = datetime.strptime(x["expiry"], "%d%b%Y").date()
+            if exp >= today: cands.append((exp, x["symbol"], x["token"], int(x["lotsize"])))
+        except Exception: continue
+    if not cands: return None, None, None
+    cands.sort(key=lambda z: z[0])
+    _, sym, tok, lot = cands[0]
+    return sym, tok, lot
+
+def get_ltp(sym, tok):
+    ak, _, _, _, px = _cfg()
+    jwt, _ = ensure_login()
+    if not jwt: return None
+    try:
+        r = requests.post(LTP_URL, headers=_hdr(ak, jwt), json={"exchange": "NFO", "tradingsymbol": sym, "symboltoken": str(tok)}, proxies=px, timeout=10).json()
+        return float(r["data"]["ltp"]) if r.get("status") else None
+    except Exception: return None
+
+def place_order(sym, tok, qty, side):
+    if os.environ.get("ANGEL_AUTO_TRADE", "0") != "1":
+        return False, "PAPER MODE (ANGEL_AUTO_TRADE=0)"
+    ak, _, _, _, px = _cfg()
+    jwt, err = ensure_login()
+    if not jwt: return False, f"Login fail: {err}"
+    ltp = get_ltp(sym, tok)
+    if not ltp: return False, "LTP fetch failed"
+    px_lim = round((ltp * 1.03 if side == "BUY" else max(0.05, ltp * 0.97)) * 20) / 20
+    payload = {
+        "variety": "NORMAL", "tradingsymbol": sym, "symboltoken": str(tok),
+        "transactiontype": side, "exchange": "NFO", "ordertype": "LIMIT",
+        "producttype": "INTRADAY", "duration": "DAY", "price": f"{px_lim:.2f}",
+        "squareoff": "0", "stoploss": "0", "quantity": str(qty),
+    }
+    try:
+        r = requests.post(ORD_URL, headers=_hdr(ak, jwt), json=payload, proxies=px, timeout=15).json()
+        if r.get("status"): return True, r["data"]["orderid"]
+        return False, r.get("message", str(r))
+    except Exception as e:
+        return False, str(e)

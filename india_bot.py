@@ -50,23 +50,28 @@ def _poll_tg_cmds():
             m = u.get("message", {})
             if str(m.get("chat", {}).get("id", "")) != cid: continue
             txt = m.get("text", "").strip().lower()
-            if txt.startswith("/bal") or txt.startswith("bal") or txt.isdigit():
+            if txt.startswith("/bal") or txt.startswith("bal"):
                 parts = txt.replace("/bal", "").replace("bal", "").strip().split()
-                if parts and parts[0].replace(".", "", 1).isdigit():
-                    _cap = float(parts[0])
-                lots = max(1, int(_cap // 16000)) if _cap >= 6000 else 0
-                note = "Low Bal (No Trade)" if _cap < 6000 else ("1L (FINNI/NIFTY only)" if _cap < 9000 else f"{lots} Lot (All 3)")
-                send_india_telegram(f"<b>Wallet Balance: ₹{_cap:,.0f}</b>\nMode: {note}")
+                if parts and parts[0].replace(".", "", 1).isdigit(): _cap = float(parts[0])
+                real_b = angel_api.get_balance()
+                b = real_b if real_b is not None else _cap
+                send_india_telegram(f"<b>Wallet Balance: ₹{b:,.2f}</b>")
     except Exception: pass
 
 def _close_trade(name, tr, live_price, title):
     global _cap
+    qty = tr["lots"] * tr["lot"]
+    ord_note = ""
+    if tr.get("opt_sym") and tr.get("opt_tok"):
+        ok, res = angel_api.place_order(tr["opt_sym"], tr["opt_tok"], qty, "SELL")
+        ord_note = f"\nOrder SELL: {'ID ' + str(res) if ok else res}"
     res_r = ((live_price - tr["entry"]) if tr["type"] == "CE" else (tr["entry"] - live_price)) / tr["risk"]
     mins_held = max(5.0, (time.time() - tr["entry_ts"]) / 60.0)
-    lots, lot = tr["lots"], tr["lot"]
-    net = (res_r * tr["risk"] * 0.35 * lot * lots) - ((mins_held / 5.0) * 0.15 * lot * lots) - (55.0 + 10.0 * (lots - 1))
+    net = (res_r * tr["risk"] * 0.35 * qty) - ((mins_held / 5.0) * 0.15 * qty) - (55.0 + 10.0 * (tr["lots"] - 1))
     _cap += net
-    send_india_telegram(f"<b>{title}: {name} {tr['type']} ({lots}L)</b>\nSpot: {live_price:.2f}\nEst. Net: ₹{net:+,.0f} | Wallet: ₹{_cap:,.0f}")
+    real_b = angel_api.get_balance()
+    bal_str = f"₹{real_b:,.2f}" if real_b is not None else f"₹{_cap:,.0f}"
+    send_india_telegram(f"<b>{title}: {name} {tr['type']} ({tr['lots']}L)</b>\nSpot: {live_price:.2f} | Wallet: {bal_str}{ord_note}")
     _active_india.pop(name, None)
 
 def _check_active_trades(name, live_price, now):
@@ -118,25 +123,36 @@ def scan_india_5m_ema():
                 _last_candle_ts[name] = cd[i]["t"]
                 entry = cl[i]; risk = abs(entry - sl)
                 if risk <= 0 or risk / entry < 0.0005 or risk / entry > 0.01: continue
-                lots = max(1, int(_cap // 16000))
-                if _cap < mgn * lots: lots = int(_cap // mgn)
-                if lots <= 0:
-                    _done_today.add(name)
-                    send_india_telegram(f"<b>SKIPPED {name}:</b> Wallet ₹{_cap:,.0f} < ₹{mgn:,}")
-                    continue
-                _daily_count += 1; _done_today.add(name)
-                be = entry + risk if opt_type == "CE" else entry - risk
+                real_b = angel_api.get_balance()
+                bal = real_b if real_b is not None else _cap
                 atm = round(entry / step) * step
                 otm = (atm + step) if opt_type == "CE" else (atm - step)
-                _active_india[name] = {"type": opt_type, "entry": entry, "risk": risk, "sl": sl, "step": 0, "lots": lots, "lot": lot, "entry_ts": time.time()}
-                send_india_telegram(f"<b>INDIA 5M EMA ({_daily_count}/3): {name} {opt_type}</b>\nSpot Entry: {entry:.2f}\nStrike (1-OTM): {otm} {opt_type}\nLots: {lots} ({lots*lot} Qty) | Wallet: ₹{_cap:,.0f}\nIndex SL: {sl:.2f} | 1:1 BE: {be:.2f}\nTime: {now.strftime('%H:%M:%S')} IST")
+                opt_sym, opt_tok, real_lot = angel_api.find_option(name, otm, opt_type)
+                lot_use = real_lot or lot
+                opt_ltp = angel_api.get_ltp(opt_sym, opt_tok) if opt_sym else None
+                cost1 = (opt_ltp * lot_use) if opt_ltp else mgn
+                lots = min(max(1, int(bal // 16000)), int(bal // cost1)) if bal >= cost1 else 0
+                if lots <= 0:
+                    _done_today.add(name)
+                    send_india_telegram(f"<b>SKIPPED {name}:</b> Bal ₹{bal:,.0f} < 1 Lot ₹{cost1:,.0f}")
+                    continue
+                qty = lots * lot_use
+                ord_msg = "No Contract"
+                if opt_sym and opt_tok:
+                    ok, res = angel_api.place_order(opt_sym, opt_tok, qty, "BUY")
+                    ord_msg = f"BUY ID {res}" if ok else res
+                _daily_count += 1; _done_today.add(name)
+                be = entry + risk if opt_type == "CE" else entry - risk
+                _active_india[name] = {"type": opt_type, "entry": entry, "risk": risk, "sl": sl, "step": 0, "lots": lots, "lot": lot_use, "entry_ts": time.time(), "opt_sym": opt_sym, "opt_tok": opt_tok}
+                ltp_s = f"₹{opt_ltp:.2f}" if opt_ltp else "N/A"
+                send_india_telegram(f"<b>INDIA 5M EMA ({_daily_count}/3): {name} {opt_type}</b>\nContract: {opt_sym or otm} | LTP: {ltp_s}\nLots: {lots} ({qty} Qty) | Bal: ₹{bal:,.0f}\nSpot: {entry:.2f} | SL: {sl:.2f} | BE: {be:.2f}\nOrder: {ord_msg}")
         except Exception as e:
             print(f"India scan err {name}:", e)
 
 def run_india_loop():
     _poll_tg_cmds()
     ang_msg = angel_api.test_angel_login()
-    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\n{ang_msg}\nIndices: BANKNIFTY, FINNIFTY, NIFTY 50\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-15:15\nWallet: ₹{_cap:,.0f} (Set anytime: /bal 20000)")
+    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\n{ang_msg}\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-15:15")
     while True:
         try:
             _poll_tg_cmds()
