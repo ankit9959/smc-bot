@@ -154,7 +154,7 @@ def scan_india_5m_ema():
                 entry = cl[i]; risk = abs(entry - sl)
                 if risk <= 0 or risk / entry < 0.0005 or risk / entry > 0.01: continue
                 real_b = angel_api.get_balance()
-                bal = real_b if real_b is not None else _cap
+                bal = min(real_b, _cap) if real_b is not None else _cap
                 atm = round(entry / step) * step
                 opt_sym, opt_tok, real_lot, opt_ltp = angel_api.find_option_by_price(name, atm, step, opt_type, pr[0], pr[1])
                 lot_use = real_lot or lot
