@@ -1,7 +1,7 @@
 DEFAULT_INDIA_TOKEN = "9172379674:AAG_8SVUycnOtWkDTNYnPt9-BQBSy1HXaOY"
 import os, time, requests
 from datetime import datetime, timezone, timedelta
-import smc_bot
+import smc_bot, angel_api
 
 IST = timezone(timedelta(hours=5, minutes=30))
 HDR = {"User-Agent": "Mozilla/5.0"}
@@ -135,7 +135,8 @@ def scan_india_5m_ema():
 
 def run_india_loop():
     _poll_tg_cmds()
-    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY, FINNIFTY, NIFTY 50\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-15:15\nWallet: ₹{_cap:,.0f} (Set anytime: /bal 20000)")
+    ang_msg = angel_api.test_angel_login()
+    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\n{ang_msg}\nIndices: BANKNIFTY, FINNIFTY, NIFTY 50\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-15:15\nWallet: ₹{_cap:,.0f} (Set anytime: /bal 20000)")
     while True:
         try:
             _poll_tg_cmds()
