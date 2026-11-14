@@ -26,7 +26,7 @@ def send_india_telegram(msg):
     if not tok or not cid:
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "HTML", "reply_markup": {"keyboard": [[{"text": "🟢 Auto ON"}, {"text": "🔴 Auto OFF"}, {"text": "📊 Status"}], [{"text": "🧪 Test Strikes"}, {"text": "📈 1Y Backtest"}, {"text": "💰 Cap ₹15k"}], [{"text": "💰 Cap ₹35k"}, {"text": "💰 Cap ₹1L"}]], "resize_keyboard": True}}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "HTML", "reply_markup": {"keyboard": [[{"text": "🟢 Auto ON"}, {"text": "🔴 Auto OFF"}, {"text": "📊 Status"}], [{"text": "🧪 Test Strikes"}, {"text": "📈 1Y Backtest"}, {"text": "💰 Cap ₹15k"}], [{"text": "💰 Cap ₹35k"}, {"text": "✏️ Custom Cap"}]], "resize_keyboard": True}}, timeout=10)
     except Exception as e:
         print("India TG err:", e)
 
@@ -75,7 +75,12 @@ def _poll_tg_cmds():
                 b = angel_api.get_balance()
                 m = "ON 🟢" if angel_api._auto_trade else "OFF 🔴 (Paper)"
                 send_india_telegram(f"<b>STATUS:</b> {m}\nBalance: ₹{b:,.2f}" if b is not None else f"<b>STATUS:</b> {m}")
-            elif txt in ("💰 cap ₹15k", "💰 cap ₹35k", "💰 cap ₹1l", "/start", "/menu"):
+            elif txt == "✏️ custom cap":
+                send_india_telegram("તમારું નવું Capital લખીને મોકલો (દા.ત. <code>22000</code> અથવા <code>45000</code>):")
+            elif txt.replace(".", "", 1).isdigit():
+                _cap = float(txt)
+                send_india_telegram(f"<b>Cap Set: ₹{_cap:,.0f}</b>")
+            elif txt in ("💰 cap ₹15k", "💰 cap ₹35k", "/start", "/menu"):
                 if "15k" in txt: _cap = 15000.0
                 elif "35k" in txt: _cap = 35000.0
                 elif "1l" in txt: _cap = 100000.0
