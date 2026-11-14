@@ -249,7 +249,7 @@ def run_1y_backtest():
     for dt, name, c1, pnl1 in sorted(evs):
         by_mon.setdefault(dt.strftime("%Y-%m"), []).append((dt, name, c1, pnl1))
 
-    cap, added, tot_1l = 15000.0, 0.0, 0.0
+    cap, added, wd_tot, tot_1l = 15000.0, 0.0, 0.0, 0.0
     for ym in sorted(by_mon):
         lots = max(1, int(cap // 16000))
         m_1l, m_cp, m_add = 0.0, 0.0, 0.0
@@ -261,12 +261,15 @@ def run_1y_backtest():
                 top = 15000.0 - cap
                 cap += top; added += top; m_add += top
         tot_1l += m_1l
-        add_s = f" | +Add ₹{m_add:,.0f}" if m_add > 0 else ""
-        lines.append(f"{ym} ({lots}L) | 1L: ₹{m_1l:+,.0f} | Cp: ₹{m_cp:+,.0f}{add_s} | Bal ₹{cap:,.0f}")
+        wd = (m_cp * 0.20) if m_cp > 0 else 0.0
+        cap -= wd; wd_tot += wd
+        extra = (f" | +Add ₹{m_add:,.0f}" if m_add > 0 else "") + (f" | -20% ₹{wd:,.0f}" if wd > 0 else "")
+        lines.append(f"{ym} ({lots}L) | Cp: ₹{m_cp:+,.0f}{extra} | Bal ₹{cap:,.0f}")
 
     inv = 15000.0 + added
     lines.append(f"\n<b>1-Lot Fixed Total:</b> ₹{tot_1l:+,.0f}")
     lines.append(f"<b>Total Invested:</b> ₹15,000 + ₹{added:,.0f} = ₹{inv:,.0f}")
-    lines.append(f"<b>Final Balance:</b> ₹{cap:,.0f}")
-    lines.append(f"<b>TRUE NET PROFIT: ₹{cap - inv:+,.0f}</b>")
+    lines.append(f"<b>Bank Withdrawn (20%):</b> ₹{wd_tot:,.0f}")
+    lines.append(f"<b>Final Trading Bal:</b> ₹{cap:,.0f}")
+    lines.append(f"<b>TRUE NET PROFIT (Bank+Bal-Inv): ₹{wd_tot + cap - inv:+,.0f}</b>")
     return "\n".join(lines)
