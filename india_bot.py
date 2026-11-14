@@ -56,6 +56,20 @@ def _poll_tg_cmds():
             elif txt in ("/off", "off"):
                 angel_api._auto_trade = False
                 send_india_telegram("<b>AUTO-TRADE: OFF 🔴</b>\nPaper Mode Active")
+            elif txt in ("/test", "test"):
+                out = ["<b>ANGEL CONTRACT TEST:</b>"]
+                for nm, sym, lot, step, _ in INDICES:
+                    try:
+                        r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
+                        cl = [x for x in r["indicators"]["quote"][0]["close"] if x]
+                        spot = float(cl[-1])
+                        otm = round(spot / step) * step + step
+                        osym, otok, rlot = angel_api.find_option(nm, otm, "CE")
+                        ltp = angel_api.get_ltp(osym, otok) if osym else None
+                        out.append(f"{nm}: {osym} | Lot {rlot} | LTP ₹{ltp}")
+                    except Exception as ex:
+                        out.append(f"{nm}: ERR {ex}")
+                send_india_telegram("\n".join(out))
             elif txt in ("/status", "status"):
                 b = angel_api.get_balance()
                 m = "ON 🟢" if angel_api._auto_trade else "OFF 🔴 (Paper)"
