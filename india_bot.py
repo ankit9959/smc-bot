@@ -67,7 +67,7 @@ def _check_active_trades(name, live_price, now):
 def scan_india_5m_ema():
     global _daily_date, _daily_count
     now = datetime.now(IST)
-    if now.weekday() >= 5:
+    if now.weekday() in (3, 5, 6):
         return
     today = now.date()
     if _daily_date != today:
@@ -120,7 +120,7 @@ def scan_india_5m_ema():
             print(f"India scan err {name}:", e)
 
 def run_india_loop():
-    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY & FINNIFTY\nMax 1 Each/Day (2/Day) | Live BE/TP/EOD 3:20 PM Alerts")
+    send_india_telegram("<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\nIndices: BANKNIFTY & FINNIFTY\nMax 1 Each/Day (No Thu) | Live BE/TP/EOD 3:20 PM Alerts")
     while True:
         try:
             scan_india_5m_ema()
