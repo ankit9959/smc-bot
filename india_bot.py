@@ -60,12 +60,11 @@ def _poll_tg_cmds():
                 out = ["<b>ANGEL CONTRACT TEST:</b>"]
                 for nm, sym, lot, step, pr in INDICES:
                     try:
-                        r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
-                        cl = [x for x in r["indicators"]["quote"][0]["close"] if x]
-                        spot = float(cl[-1])
+                        cd_t, src_t = _get_candles(nm, sym)
+                        spot = cd_t[-1]["c"]
                         atm = round(spot / step) * step
                         osym, otok, rlot, ltp = angel_api.find_option_by_price(nm, atm, step, "CE", pr[0], pr[1])
-                        out.append(f"{nm}: {osym} | Lot {rlot} | LTP ₹{ltp}")
+                        out.append(f"{nm} ({src_t}): {osym} | Lot {rlot} | LTP ₹{ltp}")
                     except Exception as ex:
                         out.append(f"{nm}: ERR {ex}")
                 send_india_telegram("\n".join(out))
@@ -97,6 +96,13 @@ def _close_trade(name, tr, live_price, title):
     send_india_telegram(f"<b>{title}: {name} {tr['type']} ({tr['lots']}L)</b>\nSpot: {live_price:.2f} | Wallet: {bal_str}{ord_note}")
     _active_india.pop(name, None)
 
+def _get_candles(name, sym):
+    cd = angel_api.get_5m_candles(name)
+    if cd and len(cd) >= 210: return cd, "Angel"
+    r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
+    q, ts = r["indicators"]["quote"][0], r["timestamp"]
+    return [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]], "Yahoo"
+
 def _check_active_trades(name, live_price, now):
     tr = _active_india.get(name)
     if not tr: return
@@ -126,9 +132,7 @@ def scan_india_5m_ema():
     if mins < 9*60 + 20 or mins > 15*60 + 25: return
     for name, sym, lot, step, pr in INDICES:
         try:
-            r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
-            q, ts = r["indicators"]["quote"][0], r["timestamp"]
-            cd = [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]]
+            cd, _ = _get_candles(name, sym)
             if len(cd) < 210: continue
             _check_active_trades(name, cd[-1]["c"], now)
             in_win = (9*60+20 <= mins < 10*60+30) or (13*60+30 <= mins < 15*60+15)

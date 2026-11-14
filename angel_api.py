@@ -157,3 +157,26 @@ def find_option_by_price(idx_name, atm, step, opt_type, min_p, max_p):
         if best is None or diff < best[0]: best = (diff, sym, tok, lot, ltp)
         if ltp < min_p * 0.7: break
     return (best[1], best[2], best[3], best[4]) if best else (None, None, None, None)
+
+CANDLE_URL = f"{BASE}/rest/secure/angelbroking/historical/v1/getCandleData"
+IDX_TOKS = {"BANKNIFTY": "99926009", "FINNIFTY": "99926037", "NIFTY 50": "99926000"}
+
+def get_5m_candles(idx_name):
+    tok = IDX_TOKS.get(idx_name)
+    if not tok: return None
+    ak, _, _, _, px = _cfg()
+    jwt, _ = ensure_login()
+    if not jwt: return None
+    now = datetime.now(IST)
+    payload = {
+        "exchange": "NSE", "symboltoken": tok, "interval": "FIVE_MINUTE",
+        "fromdate": (now - timedelta(days=7)).strftime("%Y-%m-%d 09:15"),
+        "todate": now.strftime("%Y-%m-%d %H:%M"),
+    }
+    try:
+        r = requests.post(CANDLE_URL, headers=_hdr(ak, jwt), json=payload, proxies=px, timeout=12).json()
+        rows = r.get("data") or []
+        if len(rows) < 210: return None
+        return [{"t": int(datetime.fromisoformat(x[0]).timestamp()), "h": float(x[2]), "l": float(x[3]), "c": float(x[4])} for x in rows]
+    except Exception:
+        return None
