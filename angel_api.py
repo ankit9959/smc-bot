@@ -131,3 +131,29 @@ def place_order(sym, tok, qty, side):
         return False, r.get("message", str(r))
     except Exception as e:
         return False, str(e)
+
+def find_option_by_price(idx_name, atm, step, opt_type, min_p, max_p):
+    nm = "NIFTY" if "NIFTY 50" in idx_name else idx_name
+    today = datetime.now(IST).date()
+    rows = _load_scrips()
+    exps = sorted({datetime.strptime(x["expiry"], "%d%b%Y").date() for x in rows if x.get("name") == nm})
+    exps = [e for e in exps if e >= today]
+    if not exps: return None, None, None, None
+    exp_str = exps[0].strftime("%d%b%Y").upper()
+    by_str = {}
+    for x in rows:
+        if x.get("name") == nm and x.get("expiry", "").upper() == exp_str and x.get("symbol", "").endswith(opt_type):
+            try: by_str[round(float(x["strike"]) / 100)] = (x["symbol"], x["token"], int(x["lotsize"]))
+            except Exception: pass
+    mid, best = (min_p + max_p) / 2.0, None
+    for k in range(0, 15):
+        st = atm + k * step if opt_type == "CE" else atm - k * step
+        if st not in by_str: continue
+        sym, tok, lot = by_str[st]
+        ltp = get_ltp(sym, tok)
+        if not ltp: continue
+        if min_p <= ltp <= max_p: return sym, tok, lot, ltp
+        diff = abs(ltp - mid)
+        if best is None or diff < best[0]: best = (diff, sym, tok, lot, ltp)
+        if ltp < min_p * 0.7: break
+    return (best[1], best[2], best[3], best[4]) if best else (None, None, None, None)

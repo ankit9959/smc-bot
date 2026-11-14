@@ -7,9 +7,9 @@ IST = timezone(timedelta(hours=5, minutes=30))
 HDR = {"User-Agent": "Mozilla/5.0"}
 
 INDICES = [
-    ("BANKNIFTY", "%5ENSEBANK", 30, 100, 9000),
-    ("FINNIFTY", "NIFTY_FIN_SERVICE.NS", 60, 50, 6000),
-    ("NIFTY 50", "%5ENSEI", 65, 50, 6000),
+    ("BANKNIFTY", "%5ENSEBANK", 30, 100, (250, 300)),
+    ("FINNIFTY", "NIFTY_FIN_SERVICE.NS", 60, 50, (125, 150)),
+    ("NIFTY 50", "%5ENSEI", 65, 50, (100, 150)),
 ]
 
 _last_candle_ts = {}
@@ -58,14 +58,13 @@ def _poll_tg_cmds():
                 send_india_telegram("<b>AUTO-TRADE: OFF 🔴</b>\nPaper Mode Active")
             elif txt in ("/test", "test"):
                 out = ["<b>ANGEL CONTRACT TEST:</b>"]
-                for nm, sym, lot, step, _ in INDICES:
+                for nm, sym, lot, step, pr in INDICES:
                     try:
                         r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
                         cl = [x for x in r["indicators"]["quote"][0]["close"] if x]
                         spot = float(cl[-1])
-                        otm = round(spot / step) * step + step
-                        osym, otok, rlot = angel_api.find_option(nm, otm, "CE")
-                        ltp = angel_api.get_ltp(osym, otok) if osym else None
+                        atm = round(spot / step) * step
+                        osym, otok, rlot, ltp = angel_api.find_option_by_price(nm, atm, step, "CE", pr[0], pr[1])
                         out.append(f"{nm}: {osym} | Lot {rlot} | LTP ₹{ltp}")
                     except Exception as ex:
                         out.append(f"{nm}: ERR {ex}")
@@ -125,7 +124,7 @@ def scan_india_5m_ema():
         _daily_date = today; _daily_count = 0; _active_india.clear(); _done_today.clear()
     mins = now.hour * 60 + now.minute
     if mins < 9*60 + 20 or mins > 15*60 + 25: return
-    for name, sym, lot, step, mgn in INDICES:
+    for name, sym, lot, step, pr in INDICES:
         try:
             r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=5m", headers=HDR, timeout=10).json()["chart"]["result"][0]
             q, ts = r["indicators"]["quote"][0], r["timestamp"]
@@ -150,11 +149,9 @@ def scan_india_5m_ema():
                 real_b = angel_api.get_balance()
                 bal = real_b if real_b is not None else _cap
                 atm = round(entry / step) * step
-                otm = (atm + step) if opt_type == "CE" else (atm - step)
-                opt_sym, opt_tok, real_lot = angel_api.find_option(name, otm, opt_type)
+                opt_sym, opt_tok, real_lot, opt_ltp = angel_api.find_option_by_price(name, atm, step, opt_type, pr[0], pr[1])
                 lot_use = real_lot or lot
-                opt_ltp = angel_api.get_ltp(opt_sym, opt_tok) if opt_sym else None
-                cost1 = (opt_ltp * lot_use) if opt_ltp else mgn
+                cost1 = (opt_ltp * lot_use) if opt_ltp else (pr[1] * lot_use)
                 lots = min(max(1, int(bal // 16000)), int(bal // cost1)) if bal >= cost1 else 0
                 if lots <= 0:
                     _done_today.add(name)
@@ -169,7 +166,7 @@ def scan_india_5m_ema():
                 be = entry + risk if opt_type == "CE" else entry - risk
                 _active_india[name] = {"type": opt_type, "entry": entry, "risk": risk, "sl": sl, "step": 0, "lots": lots, "lot": lot_use, "entry_ts": time.time(), "opt_sym": opt_sym, "opt_tok": opt_tok}
                 ltp_s = f"₹{opt_ltp:.2f}" if opt_ltp else "N/A"
-                send_india_telegram(f"<b>INDIA 5M EMA ({_daily_count}/3): {name} {opt_type}</b>\nContract: {opt_sym or otm} | LTP: {ltp_s}\nLots: {lots} ({qty} Qty) | Bal: ₹{bal:,.0f}\nSpot: {entry:.2f} | SL: {sl:.2f} | BE: {be:.2f}\nOrder: {ord_msg}")
+                send_india_telegram(f"<b>INDIA 5M EMA ({_daily_count}/3): {name} {opt_type}</b>\nContract: {opt_sym or atm} | LTP: {ltp_s}\nLots: {lots} ({qty} Qty) | Bal: ₹{bal:,.0f}\nSpot: {entry:.2f} | SL: {sl:.2f} | BE: {be:.2f}\nOrder: {ord_msg}")
         except Exception as e:
             print(f"India scan err {name}:", e)
 
