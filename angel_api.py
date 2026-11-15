@@ -275,3 +275,43 @@ def run_1y_backtest():
     lines.append(f"<b>Final Trading Bal:</b> ₹{cap:,.0f}")
     lines.append(f"<b>TRUE NET PROFIT (Bank+Bal-Inv): ₹{wd_tot + cap - inv:+,.0f}</b>")
     return "\n".join(lines)
+
+def run_1y_monday():
+    idxs = [("BANKNIFTY", 30), ("FINNIFTY", 60), ("NIFTY 50", 65)]
+    by_m, tot, tot_t = {}, 0.0, 0
+    for name, lot in idxs:
+        rows = fetch_1y_5m(name)
+        done = set()
+        for i in range(200, len(rows) - 1):
+            dt, hi, lo, c, e9, e21, e200 = rows[i]
+            day, t = dt.date(), dt.strftime("%H:%M")
+            if dt.weekday() != 0 or day in done or not (("09:20" <= t < "10:30") or ("13:30" <= t < "15:15")): continue
+            p9, p21 = rows[i-1][4], rows[i-1][5]
+            sig = "CE" if p9 <= p21 and e9 > e21 and c > e200 else ("PE" if p9 >= p21 and e9 < e21 and c < e200 else None)
+            if not sig: continue
+            sl = min(x[2] for x in rows[i-4:i+1]) if sig == "CE" else max(x[1] for x in rows[i-4:i+1])
+            risk = (c - sl) if sig == "CE" else (sl - c)
+            if risk <= 0: continue
+            sl_r, res_r, end_j = -1.0, 0.0, i
+            for j in range(i + 1, len(rows)):
+                if rows[j][0].date() != day: break
+                end_j = j
+                dtj, hj, lj, cj = rows[j][:4]
+                lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
+                hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
+                cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+                if lo_r <= sl_r: res_r = sl_r; break
+                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if dtj.strftime("%H:%M") >= "15:20": res_r = cl_r; break
+            else:
+                cj = rows[end_j][3]
+                res_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+            net = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot) - 55.0
+            done.add(day); tot += net; tot_t += 1
+            ym = dt.strftime("%Y-%m")
+            by_m.setdefault(ym, [0, 0.0]); by_m[ym][0] += 1; by_m[ym][1] += net
+    lines = ["<b>1-YEAR MONDAY ONLY (1-Lot):</b>"]
+    for ym in sorted(by_m):
+        lines.append(f"{ym} | {by_m[ym][0]}T | ₹{by_m[ym][1]:+,.0f}")
+    lines.append(f"\n<b>MONDAY 1Y TOTAL ({tot_t}T): ₹{tot:+,.0f}</b>")
+    return "\n".join(lines)
