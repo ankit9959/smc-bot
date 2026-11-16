@@ -1,4 +1,3 @@
-DEFAULT_INDIA_TOKEN = "9172379674:AAG_8SVUycnOtWkDTNYnPt9-BQBSy1HXaOY"
 import os, time, requests, threading
 from datetime import datetime, timezone, timedelta
 import smc_bot, angel_api
@@ -24,7 +23,7 @@ _last_err = "None"
 _err_cd = {}
 
 def send_india_telegram(msg):
-    tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or DEFAULT_INDIA_TOKEN
+    tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or ""
     cid = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or getattr(smc_bot, "TELEGRAM_CHAT_ID", "")
     if not tok or not cid:
         return
@@ -40,7 +39,7 @@ def _ema(vals, n):
 
 def _poll_tg_cmds():
     global _cap, _upd_off
-    tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or DEFAULT_INDIA_TOKEN
+    tok = os.environ.get("INDIA_TELEGRAM_TOKEN", "").strip() or ""
     cid = str(os.environ.get("TELEGRAM_CHAT_ID", "").strip() or getattr(smc_bot, "TELEGRAM_CHAT_ID", ""))
     if not tok or not cid: return
     try:
