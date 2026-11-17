@@ -330,12 +330,9 @@ def run_1y_live():
     for name, lot, cost1 in idxs:
         time.sleep(0.8)
         rows = fetch_1y_5m(name)
-        adx_v, e63_v = [0.0]*len(rows), [0.0]*len(rows)
+        adx_v = [0.0]*len(rows)
         atr = psm = nsm = adx = 0.0
-        e63 = None
         for k, (dt, h, l, c, e9, e21, e200) in enumerate(rows):
-            e63 = c if e63 is None else c * (2/64) + e63 * (62/64)
-            e63_v[k] = e63
             if k == 0: continue
             _, ph, pl, pc = rows[k-1][:4]
             tr = max(h - l, abs(h - pc), abs(l - pc))
@@ -350,14 +347,12 @@ def run_1y_live():
             dx = (100 * abs(pdi - ndi) / (pdi + ndi)) if (pdi + ndi) > 0 else 0.0
             adx = adx * (13/14) + dx / 14
             adx_v[k] = adx
-        all_data[name] = (lot, cost1, rows, adx_v, e63_v)
-        d0 = rows[0][0].strftime("%b%y") if rows else "?"
-        d1 = rows[-1][0].strftime("%b%y") if rows else "?"
-        src_info.append(f"{name[:2]}({d0}-{d1})")
+        all_data[name] = (lot, cost1, rows, adx_v)
+        src_info.append(f"{name[:2]}({rows[0][0].strftime('%b%y')}-{rows[-1][0].strftime('%b%y')})")
 
-    def run_cfg(label, use_adx=False, end_hm="15:15", use_e63=False, lock15=False):
+    def sim_comp(label, end_hm, lock15):
         evs = []
-        for name, (lot, cost1, rows, adx_v, e63_v) in all_data.items():
+        for name, (lot, cost1, rows, adx_v) in all_data.items():
             done = set()
             for i in range(200, len(rows) - 1):
                 dt, hi, lo, c, e9, e21, e200 = rows[i]
@@ -366,11 +361,10 @@ def run_1y_live():
                 if day in done: continue
                 hm = dt.strftime("%H:%M")
                 if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= end_hm)): continue
-                if use_adx and adx_v[i] < 22.0: continue
+                if adx_v[i] < 22.0: continue
                 p9, p21 = rows[i - 1][4], rows[i - 1][5]
                 sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
                 if not sig: continue
-                if use_e63 and ((sig == "CE" and c <= e63_v[i]) or (sig == "PE" and c >= e63_v[i])): continue
                 sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
                 risk = abs(c - sl)
                 if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
@@ -387,41 +381,35 @@ def run_1y_live():
                     if lock15 and hi_r >= 1.5: sl_r = max(sl_r, 0.5)
                     if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
                 pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-                done.add(day)
-                evs.append((dt, ex_dt, name, cost1, pnl1))
+                done.add(day); evs.append((dt, ex_dt, name, cost1, pnl1))
         evs.sort(key=lambda x: (x[0], x[2]))
-        bal, added, tk, sk, wins, act, by_m = 15000.0, 0.0, 0, 0, 0, [], {}
+        bal, added, tk, sk, act, by_m = 15000.0, 0.0, 0, 0, [], {}
         for ed, xd, nm, cost1, pnl1 in evs:
             keep = []
             for a_xd, a_m, a_p, a_ym in act:
                 if a_xd <= ed:
-                    bal += a_p; by_m[a_ym] += a_p
+                    bal += a_p; by_m[a_ym][2] += a_p
                     if bal < 15000.0:
                         top = 15000.0 - bal; bal += top; added += top
+                    by_m[a_ym][3] = bal
                 else: keep.append((a_xd, a_m, a_p, a_ym))
             act = keep
-            ym = ed.strftime("%Y-%m"); by_m.setdefault(ym, 0.0)
+            ym = ed.strftime("%Y-%m")
+            if ym not in by_m: by_m[ym] = [0, 0, 0.0, bal, 1]
             free = bal - sum(x[1] for x in act)
-            if free < cost1: sk += 1; continue
-            net = pnl1 - 55.0
-            tk += 1
-            if net > 0: wins += 1
-            act.append((xd, cost1, net, ym))
+            if free < cost1: sk += 1; by_m[ym][1] += 1; continue
+            lots = min(max(1, int(bal // 25000)), int(free // cost1))
+            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+            tk += 1; by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
+            act.append((xd, lots * cost1, net, ym))
         for _, _, a_p, a_ym in act:
-            bal += a_p; by_m[a_ym] += a_p
+            bal += a_p; by_m[a_ym][2] += a_p
             if bal < 15000.0:
                 top = 15000.0 - bal; bal += top; added += top
-        pm = sum(1 for v in by_m.values() if v > 0)
-        nm = sum(1 for v in by_m.values() if v <= 0)
-        wr = (wins * 100 / tk) if tk else 0
-        return f"<b>{label}</b>\nT:{tk} S:{sk} | Win:{wr:.0f}% | Months:{pm}W/{nm}L | Add:₹{added:,.0f} | <b>Net:₹{bal-(15000+added):+,.0f}</b>"
+            by_m[a_ym][3] = bal
+        pm = sum(1 for v in by_m.values() if v[2] > 0)
+        nm = sum(1 for v in by_m.values() if v[2] <= 0)
+        ml = [f"{ym} ({v[4]}L) | T:{v[0]} S:{v[1]} | {v[2]:+,.0f} | Bal ₹{v[3]:,.0f}" for ym, v in sorted(by_m.items())]
+        return f"<b>{label}</b>\nT:{tk} S:{sk} | {pm}W/{nm}L | Add:₹{added:,.0f}\n" + "\n".join(ml) + f"\n<b>Final: ₹{bal:,.0f} | Net: ₹{bal-(15000+added):+,.0f}</b>"
 
-    res = [
-        run_cfg("0) Baseline (Current Live)", False, "15:15", False, False),
-        run_cfg("1) ADX >= 22 (No Sideway)", True, "15:15", False, False),
-        run_cfg("2) Cut 14:30-15:15 Entries", False, "14:30", False, False),
-        run_cfg("3) 15m Trend (EMA63)", False, "15:15", True, False),
-        run_cfg("4) 1.5R -> +0.5R Lock", False, "15:15", False, True),
-        run_cfg("5) COMBO (ADX+14:30+1.5R)", True, "14:30", False, True),
-    ]
-    return "<b>1-YEAR HIGH-LEVEL UPGRADE TEST (1-Lot Live)</b>\n" + " | ".join(src_info) + "\n\n" + "\n\n".join(res)
+    return "<b>COMPOUNDING (1L per ₹25k): ADX vs COMBO</b>\n" + " | ".join(src_info) + "\n\n" + sim_comp("1) ADX >= 22 Only", "15:15", False) + "\n\n" + sim_comp("5) COMBO (ADX + 14:30 + 1.5R)", "14:30", True)
