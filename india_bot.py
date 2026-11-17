@@ -161,6 +161,24 @@ def _get_candles(name, sym):
     q, ts = r["indicators"]["quote"][0], r["timestamp"]
     return [{"t":ts[k],"h":float(q["high"][k]),"l":float(q["low"][k]),"c":float(q["close"][k])} for k in range(len(ts)) if q["open"][k] and q["close"][k]], "Yahoo"
 
+def _adx(cd):
+    atr = psm = nsm = adx = 0.0
+    for k in range(1, len(cd)):
+        h, l = cd[k]["h"], cd[k]["l"]
+        ph, pl, pc = cd[k-1]["h"], cd[k-1]["l"], cd[k-1]["c"]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        up, dn = h - ph, pl - l
+        pdm = up if (up > dn and up > 0) else 0.0
+        ndm = dn if (dn > up and dn > 0) else 0.0
+        atr = atr * (13/14) + tr / 14
+        psm = psm * (13/14) + pdm / 14
+        nsm = nsm * (13/14) + ndm / 14
+        pdi = (100 * psm / atr) if atr > 0 else 0.0
+        ndi = (100 * nsm / atr) if atr > 0 else 0.0
+        dx = (100 * abs(pdi - ndi) / (pdi + ndi)) if (pdi + ndi) > 0 else 0.0
+        adx = adx * (13/14) + dx / 14
+    return adx
+
 def _check_active_trades(name, live_price, now):
     tr = _active_india.get(name)
     if not tr: return
@@ -173,6 +191,12 @@ def _check_active_trades(name, live_price, now):
         msg = "SL Hit" if st == 0 else ("1:1 Cost-to-Cost BE Exit" if st == 1 else f"Trailing SL Hit (Locked 1:{st-1} Profit!)")
         _close_trade(name, tr, live_price, msg); return
     r_now = ((live_price - tr["entry"]) if tr["type"] == "CE" else (tr["entry"] - live_price)) / tr["risk"]
+    if 1.5 <= r_now < 2.0 and not tr.get("l15"):
+        tr["l15"] = True
+        sl15 = tr["entry"] + 0.5 * tr["risk"] if tr["type"] == "CE" else tr["entry"] - 0.5 * tr["risk"]
+        if (tr["type"] == "CE" and sl15 > tr["sl"]) or (tr["type"] == "PE" and sl15 < tr["sl"]):
+            tr["sl"] = sl15
+            send_india_telegram(f"<b>1:1.5 REACHED (Lock +0.5R): {name} {tr['type']}</b>\nSpot: {live_price:.2f} | New SL: {tr['sl']:.2f}")
     if r_now >= 1.0 and int(r_now) > tr["step"]:
         ns = int(r_now); tr["step"] = ns
         tr["sl"] = tr["entry"] + (ns - 1) * tr["risk"] if tr["type"] == "CE" else tr["entry"] - (ns - 1) * tr["risk"]
@@ -198,7 +222,7 @@ def scan_india_5m_ema():
             cd, _ = _get_candles(name, sym)
             if len(cd) < 210: continue
             _check_active_trades(name, cd[-1]["c"], now)
-            in_win = (9*60+20 <= mins < 10*60+30) or (13*60+30 <= mins < 15*60+15)
+            in_win = (9*60+20 <= mins < 10*60+30) or (13*60+30 <= mins < 14*60+30)
             if name in _active_india or name in _done_today or _daily_count >= 3 or not in_win: continue
             cd = cd[:-1]; cl = [x["c"] for x in cd]
             e9, e21, e200 = _ema(cl, 9), _ema(cl, 21), _ema(cl, 200)
@@ -219,7 +243,7 @@ def scan_india_5m_ema():
                 opt_sym, opt_tok, real_lot, opt_ltp = angel_api.find_option_by_price(name, atm, step, opt_type, pr[0], pr[1])
                 lot_use = real_lot or lot
                 cost1 = (opt_ltp * lot_use) if opt_ltp else (pr[1] * lot_use)
-                lots = min(max(1, int(bal // 16000)), int(bal // cost1)) if bal >= cost1 else 0
+                lots = min(max(1, int(bal // 25000)), int(bal // cost1)) if bal >= cost1 else 0
                 if lots <= 0:
                     _done_today.add(name)
                     send_india_telegram(f"<b>SKIPPED {name}:</b> Bal ₹{bal:,.0f} < 1 Lot ₹{cost1:,.0f}")
