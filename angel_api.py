@@ -317,3 +317,68 @@ def run_1y_monday():
         lines.append(f"{ym} | {by_m[ym][0]}T | ₹{by_m[ym][1]:+,.0f}")
     lines.append(f"\n<b>MONDAY 1Y TOTAL ({tot_t}T): ₹{tot:+,.0f}</b>")
     return "\n".join(lines)
+
+def run_1y_live():
+    idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
+    evs = []
+    for name, lot, cost1 in idxs:
+        rows = fetch_1y_5m(name)
+        done = set()
+        for i in range(200, len(rows) - 1):
+            dt, hi, lo, c, e9, e21, e200 = rows[i]
+            if dt.weekday() not in (1, 2, 4): continue
+            day = dt.date()
+            if day in done: continue
+            hm = dt.strftime("%H:%M")
+            if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "15:15")): continue
+            p9, p21 = rows[i - 1][4], rows[i - 1][5]
+            sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
+            if not sig: continue
+            sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
+            risk = abs(c - sl)
+            if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
+            sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
+            for j in range(i + 1, len(rows)):
+                dtj, hj, lj, cj = rows[j][:4]
+                if dtj.date() != day: break
+                end_j, ex_dt = j, dtj
+                lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
+                hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
+                cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+                if lo_r <= sl_r: res_r = sl_r; break
+                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
+            pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
+            done.add(day)
+            evs.append((dt, ex_dt, name, cost1, pnl1))
+    evs.sort(key=lambda x: (x[0], x[2]))
+    def sim(comp):
+        bal, low, tk, sk, act = 15000.0, 15000.0, 0, 0, []
+        for ed, xd, nm, cost1, pnl1 in evs:
+            keep = []
+            for a_xd, a_m, a_p in act:
+                if a_xd <= ed: bal += a_p; low = min(low, bal)
+                else: keep.append((a_xd, a_m, a_p))
+            act = keep
+            free = bal - sum(x[1] for x in act)
+            lots = min(max(1, int(bal // 16000)), int(free // cost1)) if (comp and free >= cost1) else (1 if free >= cost1 else 0)
+            if lots <= 0: sk += 1; continue
+            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+            tk += 1
+            act.append((xd, lots * cost1, net))
+        for _, _, a_p in act: bal += a_p; low = min(low, bal)
+        return tk, sk, low, bal
+    t1, s1, l1, b1 = sim(False)
+    tc, sc, lc, bc = sim(True)
+    return (
+        f"<b>1-YEAR LIVE-RULE BACKTEST (₹15k Start, 15:20 Exit)</b>\n"
+        f"Total Signals: {len(evs)}\n\n"
+        f"<b>1) 1-Lot Fixed (₹15k Cap):</b>\n"
+        f"Taken: {t1} | Skipped: {s1}\n"
+        f"Low Bal: ₹{l1:,.0f} | Final: ₹{b1:,.0f}\n"
+        f"Net Profit: <b>₹{b1 - 15000:+,.0f}</b>\n\n"
+        f"<b>2) Live Compounding (₹32k+ પછી 2L+):</b>\n"
+        f"Taken: {tc} | Skipped: {sc}\n"
+        f"Low Bal: ₹{lc:,.0f} | Final: ₹{bc:,.0f}\n"
+        f"Net Profit: <b>₹{bc - 15000:+,.0f}</b>"
+    )
