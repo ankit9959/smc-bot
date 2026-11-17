@@ -350,19 +350,19 @@ def run_1y_live():
         all_data[name] = (lot, cost1, rows, adx_v)
         src_info.append(f"{name[:2]}({rows[0][0].strftime('%b%y')}-{rows[-1][0].strftime('%b%y')})")
 
-    def sim(label, combo=False, cap5=False, comp=False):
+    def sim(label, days_ok, full_day=False):
         evs = []
         for name, (lot, cost1, rows, adx_v) in all_data.items():
             done = set()
             for i in range(200, len(rows) - 1):
                 dt, hi, lo, c, e9, e21, e200 = rows[i]
-                if dt.weekday() not in (1, 2, 4): continue
+                if dt.weekday() not in days_ok: continue
                 day = dt.date()
                 if day in done: continue
                 hm = dt.strftime("%H:%M")
-                end_hm = "14:30" if combo else "15:15"
-                if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= end_hm)): continue
-                if combo and adx_v[i] < 22.0: continue
+                ok_t = ("09:20" <= hm <= "14:30") if full_day else (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30"))
+                if not ok_t: continue
+                if adx_v[i] < 22.0: continue
                 p9, p21 = rows[i - 1][4], rows[i - 1][5]
                 sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
                 if not sig: continue
@@ -379,51 +379,48 @@ def run_1y_live():
                     cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
                     if lo_r <= sl_r: res_r = sl_r; break
                     if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
-                    if combo and hi_r >= 1.5: sl_r = max(sl_r, 0.5)
+                    if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
                     if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
-                done.add(day)
-                evs.append((dt, ex_dt, name, lot, cost1, risk, res_r, end_j - i))
+                pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
+                done.add(day); evs.append((dt, ex_dt, name, cost1, pnl1))
         evs.sort(key=lambda x: (x[0], x[2]))
-        bal, added, low, tk, sk, wins, act, by_m = 15000.0, 0.0, 15000.0, 0, 0, 0, [], {}
-        for ed, xd, nm, lot, cost1, risk, res_r, bars in evs:
-            keep = []
-            for a_xd, a_m, a_p, a_ym in act:
-                if a_xd <= ed:
-                    bal += a_p; low = min(low, bal); by_m[a_ym] += a_p
-                    if bal < 15000.0:
-                        top = 15000.0 - bal; bal += top; added += top
-                else: keep.append((a_xd, a_m, a_p, a_ym))
-            act = keep
-            ym = ed.strftime("%Y-%m"); by_m.setdefault(ym, 0.0)
-            free = bal - sum(x[1] for x in act)
-            if cap5:
-                max_rs = bal * 0.05
-                delta = min(0.45, max(0.10, (max_rs / lot) / risk))
-                otm_cost = max(2500.0, cost1 * (delta / 0.35))
-            else:
-                delta, otm_cost = 0.35, cost1
-            if free < otm_cost: sk += 1; continue
-            lots = min(max(1, int(bal // 25000)), int(free // otm_cost)) if comp else 1
-            if cap5 and lots > 1:
-                delta = min(0.45, max(0.10, (bal * 0.05 / (lots * lot)) / risk))
-            pnl = (res_r * risk * delta * lots * lot) - (bars * 0.15 * lots * lot) - (55.0 + 10.0 * (lots - 1))
-            tk += 1
-            if pnl > 0: wins += 1
-            act.append((xd, lots * otm_cost, pnl, ym))
-        for _, _, a_p, a_ym in act:
-            bal += a_p; low = min(low, bal); by_m[a_ym] += a_p
-            if bal < 15000.0:
-                top = 15000.0 - bal; bal += top; added += top
-        pm = sum(1 for v in by_m.values() if v > 0)
-        nm_c = sum(1 for v in by_m.values() if v <= 0)
-        wr = (wins * 100 / tk) if tk else 0
-        return f"<b>{label}</b>\nT:{tk} S:{sk} | Win:{wr:.0f}% | {pm}W/{nm_c}L | Add:₹{added:,.0f} | Low:₹{low:,.0f} | <b>Net:₹{bal-(15000+added):+,.0f}</b>"
+        def run_m(comp):
+            bal, added, tk, sk, wins, act, by_m = 15000.0, 0.0, 0, 0, 0, [], {}
+            for ed, xd, nm, cost1, pnl1 in evs:
+                keep = []
+                for a_xd, a_m, a_p, a_ym in act:
+                    if a_xd <= ed:
+                        bal += a_p; by_m[a_ym] += a_p
+                        if bal < 15000.0:
+                            top = 15000.0 - bal; bal += top; added += top
+                    else: keep.append((a_xd, a_m, a_p, a_ym))
+                act = keep
+                ym = ed.strftime("%Y-%m"); by_m.setdefault(ym, 0.0)
+                free = bal - sum(x[1] for x in act)
+                if free < cost1: sk += 1; continue
+                lots = min(max(1, int(bal // 25000)), int(free // cost1)) if comp else 1
+                net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+                tk += 1
+                if net > 0: wins += 1
+                act.append((xd, lots * cost1, net, ym))
+            for _, _, a_p, a_ym in act:
+                bal += a_p; by_m[a_ym] += a_p
+                if bal < 15000.0:
+                    top = 15000.0 - bal; bal += top; added += top
+            pm = sum(1 for v in by_m.values() if v > 0)
+            nm_c = sum(1 for v in by_m.values() if v <= 0)
+            wr = (wins * 100 / tk) if tk else 0
+            return tk, sk, wr, pm, nm_c, added, bal - (15000.0 + added)
+        t1, s1, w1, p1, n1, a1, net1 = run_m(False)
+        tc, sc, wc, pc, nc, ac, netc = run_m(True)
+        return f"<b>{label}</b>\n1L: T:{t1} S:{s1} | Win:{w1:.0f}% | {p1}W/{n1}L | Add:₹{a1:,.0f} | <b>₹{net1:+,.0f}</b>\nComp: <b>₹{netc:+,.0f}</b>"
 
     res = [
-        sim("1) Current Live (0.35D, 1L)", False, False, False),
-        sim("2) Current Live + 5% OTM SL (1L)", False, True, False),
-        sim("3) COMBO + 5% OTM SL (1L)", True, True, False),
-        sim("4) COMBO + 5% OTM SL (Comp)", True, True, True),
-        sim("5) COMBO Normal 0.35D (Comp)", True, False, True),
+        sim("0) Current COMBO (Tue/Wed/Fri)", (1, 2, 4), False),
+        sim("1) Full Day 09:20-14:30 (T/W/F)", (1, 2, 4), True),
+        sim("2) + Monday ON (M/T/W/F)", (0, 1, 2, 4), False),
+        sim("3) + Thursday ON (T/W/Th/F)", (1, 2, 3, 4), False),
+        sim("4) All 5 Days ON (M-F, Win)", (0, 1, 2, 3, 4), False),
+        sim("5) All 5 Days + Full Day (M-F)", (0, 1, 2, 3, 4), True),
     ]
-    return "<b>1-YEAR TEST: 5% MAX CAPITAL SL (OTM)</b>\n" + " | ".join(src_info) + "\n\n" + "\n\n".join(res)
+    return "<b>1-YEAR COMBO: DAY & TIME TEST</b>\n" + " | ".join(src_info) + "\n\n" + "\n\n".join(res)
