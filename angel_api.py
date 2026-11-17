@@ -326,7 +326,7 @@ def run_1y_monday():
 def run_1y_live():
     import time
     idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
-    all_data, src_info = {}, []
+    evs, src_info = [], []
     for name, lot, cost1 in idxs:
         time.sleep(0.8)
         rows = fetch_1y_5m(name)
@@ -347,69 +347,92 @@ def run_1y_live():
             dx = (100 * abs(pdi - ndi) / (pdi + ndi)) if (pdi + ndi) > 0 else 0.0
             adx = adx * (13/14) + dx / 14
             adx_v[k] = adx
-        all_data[name] = (lot, cost1, rows, adx_v)
-        src_info.append(f"{name[:2]}({rows[0][0].strftime('%b%y')}-{rows[-1][0].strftime('%b%y')})")
-
-    def sim_comp(label, end_hm, lock15):
-        evs = []
-        for name, (lot, cost1, rows, adx_v) in all_data.items():
-            done = set()
-            for i in range(200, len(rows) - 1):
-                dt, hi, lo, c, e9, e21, e200 = rows[i]
-                if dt.weekday() not in (1, 2, 4): continue
-                day = dt.date()
-                if day in done: continue
-                hm = dt.strftime("%H:%M")
-                if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= end_hm)): continue
-                if adx_v[i] < 22.0: continue
-                p9, p21 = rows[i - 1][4], rows[i - 1][5]
-                sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
-                if not sig: continue
-                sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
-                risk = abs(c - sl)
-                if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
-                sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
-                for j in range(i + 1, len(rows)):
-                    dtj, hj, lj, cj = rows[j][:4]
-                    if dtj.date() != day: break
-                    end_j, ex_dt = j, dtj
-                    lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
-                    hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
-                    cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
-                    if lo_r <= sl_r: res_r = sl_r; break
-                    if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
-                    if lock15 and hi_r >= 1.5: sl_r = max(sl_r, 0.5)
-                    if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
-                pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-                done.add(day); evs.append((dt, ex_dt, name, cost1, pnl1))
-        evs.sort(key=lambda x: (x[0], x[2]))
-        bal, added, tk, sk, act, by_m = 15000.0, 0.0, 0, 0, [], {}
-        for ed, xd, nm, cost1, pnl1 in evs:
-            keep = []
-            for a_xd, a_m, a_p, a_ym in act:
-                if a_xd <= ed:
-                    bal += a_p; by_m[a_ym][2] += a_p
-                    if bal < 15000.0:
-                        top = 15000.0 - bal; bal += top; added += top
-                    by_m[a_ym][3] = bal
-                else: keep.append((a_xd, a_m, a_p, a_ym))
-            act = keep
-            ym = ed.strftime("%Y-%m")
-            if ym not in by_m: by_m[ym] = [0, 0, 0.0, bal, 1]
-            free = bal - sum(x[1] for x in act)
-            if free < cost1: sk += 1; by_m[ym][1] += 1; continue
-            lots = min(max(1, int(bal // 25000)), int(free // cost1))
-            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
-            tk += 1; by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
-            act.append((xd, lots * cost1, net, ym))
-        for _, _, a_p, a_ym in act:
-            bal += a_p; by_m[a_ym][2] += a_p
-            if bal < 15000.0:
-                top = 15000.0 - bal; bal += top; added += top
-            by_m[a_ym][3] = bal
-        pm = sum(1 for v in by_m.values() if v[2] > 0)
-        nm = sum(1 for v in by_m.values() if v[2] <= 0)
-        ml = [f"{ym} ({v[4]}L) | T:{v[0]} S:{v[1]} | {v[2]:+,.0f} | Bal ₹{v[3]:,.0f}" for ym, v in sorted(by_m.items())]
-        return f"<b>{label}</b>\nT:{tk} S:{sk} | {pm}W/{nm}L | Add:₹{added:,.0f}\n" + "\n".join(ml) + f"\n<b>Final: ₹{bal:,.0f} | Net: ₹{bal-(15000+added):+,.0f}</b>"
-
-    return "<b>COMPOUNDING (1L per ₹25k): ADX vs COMBO</b>\n" + " | ".join(src_info) + "\n\n" + sim_comp("1) ADX >= 22 Only", "15:15", False) + "\n\n" + sim_comp("5) COMBO (ADX + 14:30 + 1.5R)", "14:30", True)
+        done, sig_cnt = set(), 0
+        for i in range(200, len(rows) - 1):
+            dt, hi, lo, c, e9, e21, e200 = rows[i]
+            if dt.weekday() not in (1, 2, 4): continue
+            day = dt.date()
+            if day in done: continue
+            hm = dt.strftime("%H:%M")
+            if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30")): continue
+            if adx_v[i] < 22.0: continue
+            p9, p21 = rows[i - 1][4], rows[i - 1][5]
+            sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
+            if not sig: continue
+            sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
+            risk = abs(c - sl)
+            if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
+            sl_r, res_r, ex_dt, end_j, max_r, ex_why = -1.0, 0.0, dt, i, 0.0, "EOD-"
+            for j in range(i + 1, len(rows)):
+                dtj, hj, lj, cj = rows[j][:4]
+                if dtj.date() != day: break
+                end_j, ex_dt = j, dtj
+                lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
+                hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
+                cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+                max_r = max(max_r, hi_r)
+                if lo_r <= sl_r:
+                    res_r = sl_r
+                    ex_why = "SL" if sl_r < 0 else ("BE" if sl_r == 0 else ("L1.5" if sl_r == 0.5 else "TRAIL"))
+                    break
+                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
+                if dtj.strftime("%H:%M") >= "15:15":
+                    res_r = cl_r
+                    ex_why = "EOD+" if cl_r > 0 else "EOD-"
+                    break
+            pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
+            done.add(day); sig_cnt += 1
+            evs.append((dt, ex_dt, name, cost1, pnl1, ex_why, max_r))
+        src_info.append(f"{name[:2]}:{sig_cnt}T")
+    evs.sort(key=lambda x: (x[0], x[2]))
+    bal, added, low, tk, sk, wins, act, by_m = 15000.0, 0.0, 15000.0, 0, 0, 0, [], {}
+    st = {"SL": 0, "BE": 0, "L1.5": 0, "TRAIL": 0, "EOD+": 0, "EOD-": 0}
+    idx_p = {"BANKNIFTY": [0, 0, 0.0], "FINNIFTY": [0, 0, 0.0], "NIFTY 50": [0, 0, 0.0]}
+    rcnt = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    best_r = 0.0
+    for ed, xd, nm, cost1, pnl1, ex_why, max_r in evs:
+        keep = []
+        for a_xd, a_m, a_p, a_ym in act:
+            if a_xd <= ed:
+                bal += a_p; low = min(low, bal); by_m[a_ym][2] += a_p
+                if bal < 15000.0:
+                    top = 15000.0 - bal; bal += top; added += top
+                by_m[a_ym][3] = bal
+            else: keep.append((a_xd, a_m, a_p, a_ym))
+        act = keep
+        ym = ed.strftime("%Y-%m")
+        if ym not in by_m: by_m[ym] = [0, 0, 0.0, bal, 1]
+        free = bal - sum(x[1] for x in act)
+        if free < cost1: sk += 1; by_m[ym][1] += 1; continue
+        lots = min(max(1, int(bal // 25000)), int(free // cost1))
+        net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+        net1 = pnl1 - 55.0
+        tk += 1; st[ex_why] += 1
+        if net > 0: wins += 1; idx_p[nm][1] += 1
+        idx_p[nm][0] += 1; idx_p[nm][2] += net1
+        best_r = max(best_r, max_r)
+        for rk in (1, 2, 3, 4, 5):
+            if max_r >= rk: rcnt[rk] += 1
+        by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
+        act.append((xd, lots * cost1, net, ym))
+    for _, _, a_p, a_ym in act:
+        bal += a_p; low = min(low, bal); by_m[a_ym][2] += a_p
+        if bal < 15000.0:
+            top = 15000.0 - bal; bal += top; added += top
+        by_m[a_ym][3] = bal
+    pm = sum(1 for v in by_m.values() if v[2] > 0)
+    nm_c = sum(1 for v in by_m.values() if v[2] <= 0)
+    ml = [f"{ym} ({v[4]}L) | T:{v[0]} S:{v[1]} | {v[2]:+,.0f} | Bal ₹{v[3]:,.0f}" for ym, v in sorted(by_m.items())]
+    il = [f"{k[:2]}:{v[0]}T ({v[1]}W) ₹{v[2]:+,.0f}" for k, v in idx_p.items()]
+    return (
+        f"<b>5) COMBO A-TO-Z FULL REPORT (1Y Live)</b>\n"
+        f"Data: " + " | ".join(src_info) + f" (Sig:{len(evs)})\n"
+        f"Taken:{tk} Skip:{sk} | <b>Win:{wins}/{tk} ({wins*100/tk:.0f}%)</b> | Months:{pm}W/{nm_c}L\n\n"
+        f"<b>Exits:</b> SL:{st['SL']} | BE(1:1):{st['BE']} | Lock1.5R:{st['L1.5']} | TRAIL:{st['TRAIL']} | EOD+:{st['EOD+']} | EOD-:{st['EOD-']}\n"
+        f"<b>Peak R Reached:</b> 1R+:{rcnt[1]} | 2R+:{rcnt[2]} | 3R+:{rcnt[3]} | 4R+:{rcnt[4]} | 5R+:{rcnt[5]} (Max:{best_r:.1f}R)\n"
+        f"<b>By Index (1L):</b> " + " | ".join(il) + "\n\n"
+        f"<b>Compounding (1L/₹25k):</b>\n" + "\n".join(ml) + "\n\n"
+        f"Add:₹{added:,.0f} | Low:₹{low:,.0f} | Final:₹{bal:,.0f}\n"
+        f"<b>TRUE NET PROFIT: ₹{bal-(15000+added):+,.0f}</b>"
+    )
