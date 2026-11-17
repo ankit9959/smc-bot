@@ -195,15 +195,20 @@ def fetch_1y_5m(idx_name):
         f_dt = end - timedelta(days=k * 30)
         t_dt = end - timedelta(days=(k - 1) * 30)
         p = {"exchange": "NSE", "symboltoken": tok, "interval": "FIVE_MINUTE", "fromdate": f_dt.strftime("%Y-%m-%d 09:15"), "todate": t_dt.strftime("%Y-%m-%d 15:30")}
-        try:
-            r = requests.post(CANDLE_URL, headers=_hdr(ak, jwt), json=p, proxies=px, timeout=15).json()
-            for x in (r.get("data") or []):
-                ts = int(datetime.fromisoformat(x[0]).timestamp())
-                if ts not in seen:
-                    seen.add(ts)
-                    all_rows.append((datetime.fromtimestamp(ts, IST), float(x[2]), float(x[3]), float(x[4])))
-        except Exception: pass
-        time.sleep(0.4)
+        for _ in range(3):
+            try:
+                r = requests.post(CANDLE_URL, headers=_hdr(ak, jwt), json=p, proxies=px, timeout=15).json()
+                data = r.get("data") or []
+                if data:
+                    for x in data:
+                        ts = int(datetime.fromisoformat(x[0]).timestamp())
+                        if ts not in seen:
+                            seen.add(ts)
+                            all_rows.append((datetime.fromtimestamp(ts, IST), float(x[2]), float(x[3]), float(x[4])))
+                    break
+            except Exception: pass
+            time.sleep(1.0)
+        time.sleep(0.5)
     all_rows.sort(key=lambda z: z[0])
     out, e9, e21, e200 = [], None, None, None
     for dt, h, l, c in all_rows:
