@@ -59,9 +59,9 @@ def _poll_tg_cmds():
                 angel_api._auto_trade = False
                 send_india_telegram("<b>AUTO-TRADE: OFF 🔴</b>\nPaper Mode Active")
             elif txt in ("/btlive", "btlive"):
-            send_india_telegram("Running 1-Year Live-Rule Backtest (~20s)...")
-            threading.Thread(target=lambda: send_india_telegram(angel_api.run_1y_live()), daemon=True).start()
-        elif txt in ("/btmon", "btmon"):
+                send_india_telegram("Running 1-Year Live-Rule Backtest (~20s)...")
+                threading.Thread(target=lambda: send_india_telegram(angel_api.run_1y_live()), daemon=True).start()
+            elif txt in ("/btmon", "btmon"):
                 send_india_telegram("Checking 1-Year Mondays (~15s)...")
                 threading.Thread(target=lambda: send_india_telegram(angel_api.run_1y_monday()), daemon=True).start()
             elif txt in ("/bt1y", "bt1y", "📈 1y backtest"):
