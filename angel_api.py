@@ -146,16 +146,18 @@ def find_option_by_price(idx_name, atm, step, opt_type, min_p, max_p):
             try: by_str[round(float(x["strike"]) / 100)] = (x["symbol"], x["token"], int(x["lotsize"]))
             except Exception: pass
     mid, best = (min_p + max_p) / 2.0, None
-    for k in range(0, 15):
-        st = atm + k * step if opt_type == "CE" else atm - k * step
-        if st not in by_str: continue
-        sym, tok, lot = by_str[st]
-        ltp = get_ltp(sym, tok)
-        if not ltp: continue
-        if min_p <= ltp <= max_p: return sym, tok, lot, ltp
-        diff = abs(ltp - mid)
-        if best is None or diff < best[0]: best = (diff, sym, tok, lot, ltp)
-        if ltp < min_p * 0.7: break
+    for rng in (range(0, 15), range(-1, -11, -1)):
+        for k in rng:
+            st = atm + k * step if opt_type == "CE" else atm - k * step
+            if st not in by_str: continue
+            sym, tok, lot = by_str[st]
+            ltp = get_ltp(sym, tok)
+            if not ltp: continue
+            if min_p <= ltp <= max_p: return sym, tok, lot, ltp
+            diff = abs(ltp - mid)
+            if best is None or diff < best[0]: best = (diff, sym, tok, lot, ltp)
+            if k >= 0 and ltp < min_p * 0.7: break
+            if k < 0 and ltp > max_p * 1.3: break
     return (best[1], best[2], best[3], best[4]) if best else (None, None, None, None)
 
 CANDLE_URL = f"{BASE}/rest/secure/angelbroking/historical/v1/getCandleData"
