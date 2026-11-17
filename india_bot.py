@@ -228,6 +228,7 @@ def scan_india_5m_ema():
             e9, e21, e200 = _ema(cl, 9), _ema(cl, 21), _ema(cl, 200)
             i = len(cd) - 1
             if _last_candle_ts.get(name) == cd[i]["t"]: continue
+            if _adx(cd) < 22.0: continue
             opt_type = None
             if e9[i] > e21[i] and e9[i-1] <= e21[i-1] and cl[i] > e200[i]:
                 opt_type = "CE"; sl = min(x["l"] for x in cd[i-5:i+1])
@@ -266,7 +267,7 @@ def scan_india_5m_ema():
 def run_india_loop():
     _poll_tg_cmds()
     ang_msg = angel_api.test_angel_login()
-    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\n{ang_msg}\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-15:15")
+    send_india_telegram(f"<b>INDIA 5M EMA BOT ONLINE (PRO)</b>\n{ang_msg}\nDays: Tue / Wed / Fri | 09:20-10:30 & 13:30-14:30 | COMBO ADX>=22")
     while True:
         try:
             _poll_tg_cmds()
