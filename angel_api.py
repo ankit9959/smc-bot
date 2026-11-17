@@ -354,9 +354,12 @@ def run_1y_live():
                 cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
                 if lo_r <= sl_r:
                     res_r = sl_r
-                    ex_why = "SL" if sl_r < 0 else ("BE" if sl_r == 0 else "TRAIL")
+                    ex_why = "SL" if sl_r < 0 else "BE"
                     break
-                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if hi_r >= 2.0:
+                    res_r, ex_why = 2.0, "TP"
+                    break
+                if hi_r >= 1.5: sl_r = max(sl_r, 0.0)
                 if dtj.strftime("%H:%M") >= "15:15":
                     res_r, ex_why = cl_r, "EOD"
                     break
@@ -369,6 +372,7 @@ def run_1y_live():
     evs.sort(key=lambda x: (x[0], x[2]))
     def sim(mode):
         bal, added, bank, tk, sk, act, by_m = 15000.0, 0.0, 0.0, 0, 0, [], {}
+        st = {"TP": 0, "BE": 0, "EOD": 0, "SL": 0}
         rec, cur_ym = False, None
         def close_month(m_key):
             nonlocal bal, bank
@@ -400,7 +404,8 @@ def run_1y_live():
             elif mode == "comp": lots = min(max(1, int(bal // 16000)), int(free // cost1))
             else: lots = min(max(1, int(bal // 25000)), int(free // cost1))
             net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
-            tk += 1; by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
+            tk += 1; st[ex_why] += 1
+            by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
             act.append((xd, lots * cost1, net, ym))
         for _, _, a_p, a_ym in act:
             bal += a_p; by_m[a_ym][2] += a_p
@@ -408,24 +413,26 @@ def run_1y_live():
                 top = 15000.0 - bal; bal += top; added += top; by_m[a_ym][5] += top
             by_m[a_ym][3] = bal
         close_month(cur_ym)
-        return tk, sk, added, bank, bal, by_m
-    t1, s1, a1, _, b1, _ = sim("1lot")
-    tc, sc, ac, _, bc, _ = sim("comp")
-    ts, ss, asa, bk, bs, bm = sim("safe")
-    slines = []
+        return tk, sk, added, bank, bal, st, by_m
+    t1, s1, a1, _, b1, st1, _ = sim("1lot")
+    tc, sc, ac, _, bc, stc, _ = sim("comp")
+    ts, ss, asa, bk, bs, sts, bm = sim("safe")
+    slines, pm, nm = [], 0, 0
     for ym, v in sorted(bm.items()):
+        if v[2] >= 0: pm += 1
+        else: nm += 1
         w = f" | Bank+₹{v[6]:,.0f}" if v[6] > 0 else ""
         slines.append(f"{ym} ({v[4]}L) | T:{v[0]} S:{v[1]} | {v[2]:+,.0f}{w} | Bal ₹{v[3]:,.0f}")
     inv1, invc, invs = 15000.0 + a1, 15000.0 + ac, 15000.0 + asa
     return (
-        f"<b>1-YEAR BACKTEST COMPARISON (15:20 Exit)</b>\n"
+        f"<b>1Y BACKTEST: 1:1.5 BE & 1:2 BOOK (15:20 Exit)</b>\n"
         f"Data: " + " | ".join(src_info) + f" ({len(evs)} Sig)\n\n"
-        f"<b>1) 1-Lot Fixed:</b> T:{t1} S:{s1} | Inv ₹{inv1:,.0f} | Bal ₹{b1:,.0f} | <b>Net ₹{b1 - inv1:+,.0f}</b>\n"
+        f"<b>1) 1-Lot Fixed:</b> T:{t1} S:{s1} | TP:{st1['TP']} BE:{st1['BE']} EOD:{st1['EOD']} SL:{st1['SL']}\n"
+        f"Inv ₹{inv1:,.0f} | Bal ₹{b1:,.0f} | <b>Net ₹{b1 - inv1:+,.0f}</b>\n\n"
         f"<b>2) Full Comp (₹16k/L):</b> T:{tc} S:{sc} | Inv ₹{invc:,.0f} | Bal ₹{bc:,.0f} | <b>Net ₹{bc - invc:+,.0f}</b>\n\n"
-        f"<b>3) SAFE MONEY MGMT (₹35k->₹15k Out + 30% Bank + 1L/₹25k):</b>\n"
+        f"<b>3) SAFE MGMT ({pm} Win / {nm} Loss Months):</b>\n"
         + "\n".join(slines) + "\n\n"
-        f"Taken: {ts} | Skip: {ss} | Invested: ₹{invs:,.0f}\n"
-        f"<b>Bank Withdrawn (Safe): ₹{bk:,.0f}</b>\n"
-        f"Final Trading Bal: ₹{bs:,.0f}\n"
+        f"Taken:{ts} Skip:{ss} | TP:{sts['TP']} BE:{sts['BE']} EOD:{sts['EOD']} SL:{sts['SL']}\n"
+        f"Inv: ₹{invs:,.0f} | <b>Bank Safe: ₹{bk:,.0f}</b> | Final Bal: ₹{bs:,.0f}\n"
         f"<b>TRUE NET PROFIT: ₹{bk + bs - invs:+,.0f}</b>"
     )
