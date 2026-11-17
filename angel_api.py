@@ -122,7 +122,7 @@ def place_order(sym, tok, qty, side):
     payload = {
         "variety": "NORMAL", "tradingsymbol": sym, "symboltoken": str(tok),
         "transactiontype": side, "exchange": "NFO", "ordertype": "LIMIT",
-        "producttype": "INTRADAY", "duration": "DAY", "price": f"{px_lim:.2f}",
+        "producttype": "CARRYFORWARD", "duration": "DAY", "price": f"{px_lim:.2f}",
         "squareoff": "0", "stoploss": "0", "quantity": str(qty),
     }
     try:
