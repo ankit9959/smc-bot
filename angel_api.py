@@ -172,7 +172,7 @@ def get_5m_candles(idx_name):
     now = datetime.now(IST)
     payload = {
         "exchange": "NSE", "symboltoken": tok, "interval": "FIVE_MINUTE",
-        "fromdate": (now - timedelta(days=7)).strftime("%Y-%m-%d 09:15"),
+        "fromdate": (now - timedelta(days=25)).strftime("%Y-%m-%d 09:15"),
         "todate": now.strftime("%Y-%m-%d %H:%M"),
     }
     try:
