@@ -325,15 +325,25 @@ def run_1y_monday():
 
 def run_1y_live():
     import time
-    idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
-    evs_map = {}
-    for name, lot, cost1 in idxs:
-        time.sleep(0.6)
-        rows = fetch_1y_5m(name)
+    idxs = [("BANKNIFTY", 30), ("FINNIFTY", 60), ("NIFTY 50", 65)]
+    out = ["<b>TODAY'S ANGEL 1252-CANDLE TEST (5) COMBO)</b>"]
+    for name, lot in idxs:
+        time.sleep(0.5)
+        cd = get_5m_candles(name)
+        if not cd or len(cd) < 210:
+            out.append(f"\n<b>{name}:</b> Data N/A"); continue
+        rows, e9, e21, e200 = [], None, None, None
+        for x in cd:
+            dt = datetime.fromtimestamp(x["t"], IST)
+            h, l, c = x["h"], x["l"], x["c"]
+            e9 = c if e9 is None else c * 0.2 + e9 * 0.8
+            e21 = c if e21 is None else c * (2/22) + e21 * (20/22)
+            e200 = c if e200 is None else c * (2/201) + e200 * (199/201)
+            rows.append((dt, h, l, c, e9, e21, e200))
         adx_v = [0.0]*len(rows)
         atr = psm = nsm = adx = 0.0
-        for k, (dt, h, l, c, e9, e21, e200) in enumerate(rows):
-            if k == 0: continue
+        for k in range(1, len(rows)):
+            _, h, l, c = rows[k][:4]
             _, ph, pl, pc = rows[k-1][:4]
             tr = max(h - l, abs(h - pc), abs(l - pc))
             up, dn = h - ph, pl - l
@@ -347,66 +357,39 @@ def run_1y_live():
             dx = (100 * abs(pdi - ndi) / (pdi + ndi)) if (pdi + ndi) > 0 else 0.0
             adx = adx * (13/14) + dx / 14
             adx_v[k] = adx
-        done, ev_l = set(), []
-        for i in range(200, len(rows) - 1):
+        today = rows[-1][0].date()
+        hits = []
+        for i in range(200, len(rows)):
             dt, hi, lo, c, e9, e21, e200 = rows[i]
-            if dt.weekday() not in (1, 2, 4): continue
-            day = dt.date()
-            if day in done: continue
-            hm = dt.strftime("%H:%M")
-            if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30")): continue
-            if adx_v[i] < 22.0: continue
-            p9, p21 = rows[i - 1][4], rows[i - 1][5]
-            sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
+            if dt.date() != today: continue
+            p9, p21 = rows[i-1][4], rows[i-1][5]
+            sig = "CE" if (p9 <= p21 and e9 > e21) else ("PE" if (p9 >= p21 and e9 < e21) else None)
             if not sig: continue
-            sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
+            hm = dt.strftime("%H:%M")
+            in_t = ("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30")
+            ok_200 = (c > e200) if sig == "CE" else (c < e200)
+            ok_adx = adx_v[i] >= 22.0
+            sl = min(rows[j][2] for j in range(i-5, i+1)) if sig == "CE" else max(rows[j][1] for j in range(i-5, i+1))
             risk = abs(c - sl)
-            if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
-            sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
-            for j in range(i + 1, len(rows)):
+            ok_r = 0.0005 <= (risk / c) <= 0.01
+            if not (in_t and ok_200 and ok_adx and ok_r):
+                why = "Time" if not in_t else ("200EMA" if not ok_200 else (f"ADX({adx_v[i]:.2f})" if not ok_adx else "Risk%"))
+                hits.append(f"• {hm} {sig} | ADX:{adx_v[i]:.2f} | SKIP({why})")
+                continue
+            sl_r, res_r, ex_t, ex_why = -1.0, 0.0, hm, "OPEN"
+            end_j = i
+            for j in range(i+1, len(rows)):
                 dtj, hj, lj, cj = rows[j][:4]
-                if dtj.date() != day: break
-                end_j, ex_dt = j, dtj
+                if dtj.date() != today: break
+                end_j = j
                 lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
                 hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
                 cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
-                if lo_r <= sl_r: res_r = sl_r; break
+                if lo_r <= sl_r: res_r, ex_t, ex_why = sl_r, dtj.strftime("%H:%M"), ("SL" if sl_r < 0 else "TRAIL"); break
                 if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
                 if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
-                if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
-            pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-            done.add(day); ev_l.append((dt, ex_dt, name, cost1, pnl1))
-        evs_map[name] = ev_l
-
-    def sim(label, names):
-        evs = sorted([e for n in names for e in evs_map.get(n, [])], key=lambda x: (x[0], x[2]))
-        bal, added, low, tk, sk, wins, act, by_m = 15000.0, 0.0, 15000.0, 0, 0, 0, [], {}
-        for ed, xd, nm, cost1, pnl1 in evs:
-            act_n = []
-            for a_xd, a_m, a_p, a_ym in act:
-                if a_xd <= ed:
-                    bal += a_p; low = min(low, bal); by_m[a_ym] += a_p
-                    if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
-                else: act_n.append((a_xd, a_m, a_p, a_ym))
-            act = act_n
-            ym = ed.strftime("%Y-%m"); by_m.setdefault(ym, 0.0)
-            free = bal - sum(x[1] for x in act)
-            if free < cost1: sk += 1; continue
-            lots = min(max(1, int(bal // 25000)), int(free // cost1))
-            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
-            tk += 1
-            if net > 0: wins += 1
-            act.append((xd, lots * cost1, net, ym))
-        for _, _, a_p, a_ym in act:
-            bal += a_p; low = min(low, bal); by_m[a_ym] += a_p
-            if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
-        pm = sum(1 for v in by_m.values() if v > 0)
-        nm_c = sum(1 for v in by_m.values() if v <= 0)
-        wr = (wins * 100 / tk) if tk else 0
-        return f"<b>{label}</b>\nT:{tk} S:{sk} | Win:{wr:.0f}% | {pm}W/{nm_c}L | Add:₹{added:,.0f} | Low:₹{low:,.0f}\nFinal:₹{bal:,.0f} | <b>Net: ₹{bal-(15000+added):+,.0f}</b>"
-
-    return "<b>1-YEAR COMBO: BA+FI vs BA+FI+NI</b>\n\n" + "\n\n".join([
-        sim("1) ONLY BANKNIFTY", ["BANKNIFTY"]),
-        sim("2) BANKNIFTY + FINNIFTY", ["BANKNIFTY", "FINNIFTY"]),
-        sim("3) ALL 3 (BA + FI + NI)", ["BANKNIFTY", "FINNIFTY", "NIFTY 50"]),
-    ])
+                if dtj.strftime("%H:%M") >= "15:15": res_r, ex_t, ex_why = cl_r, "15:20", "EOD"; break
+            pnl = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot) - 55.0
+            hits.append(f"• <b>{hm} {sig} TRADE!</b> ADX:{adx_v[i]:.2f} | Exit {ex_t} ({ex_why}) | <b>Est:₹{pnl:+,.0f}</b>")
+        out.append(f"\n<b>{name} ({len(rows)} cd):</b>\n" + ("\n".join(hits) if hits else "No 9/21 Cross"))
+    return "\n".join(out)
