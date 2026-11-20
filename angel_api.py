@@ -382,9 +382,10 @@ def run_1y_live():
                 cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
                 if lo_r <= sl_r:
                     res_r, ex_t = sl_r, dtj.strftime("%H:%M")
-                    ex_why = "SL" if sl_r < 0 else ("BE" if sl_r == 0 else f"T{int(sl_r)}R")
+                    ex_why = "SL" if sl_r < 0 else ("BE" if sl_r == 0 else ("L1.5" if sl_r == 0.5 else f"T{int(sl_r)}R"))
                     break
                 if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
                 if dtj.strftime("%H:%M") >= "15:15":
                     res_r, ex_t, ex_why = cl_r, "15:20", "EOD"
                     break
@@ -418,7 +419,7 @@ def run_1y_live():
         bal += a_p
         if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
     return (
-        f"<b>1Y DAY-BY-DAY (1:1->Cost, 1:2->1:1)</b>\n"
+        f"<b>1Y DAY-BY-DAY (LIVE BOT: +1.5R Lock)</b>\n"
         + "\n".join(tlines) +
         f"\n\nTaken:{tk} Skip:{sk} | Win:{wins*100/tk:.0f}%\n"
         f"1-Lot Net: ₹{tot1:+,.0f} | Add:₹{added:,.0f}\n"
