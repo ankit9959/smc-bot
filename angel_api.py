@@ -349,11 +349,11 @@ def run_1y_live():
         return adx
 
     idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
-    evs, src_info = [], []
+    evs = []
     for name, lot, cost1 in idxs:
         time.sleep(0.6)
         rows = fetch_1y_5m(name)
-        done, sig_cnt = set(), 0
+        done = set()
         for i in range(250, len(rows) - 1):
             dt, hi, lo, c, e9, e21, e200 = rows[i]
             if dt.weekday() not in (1, 2, 4): continue
@@ -365,15 +365,14 @@ def run_1y_live():
             if not ((p9 <= p21 and e9 > e21) or (p9 >= p21 and e9 < e21)): continue
             win = rows[max(0, i - 1252):i + 1]
             cl = [x[3] for x in win]
-            we200 = ema_last(cl, 200)
-            wadx = adx_last(win)
+            we200, wadx = ema_last(cl, 200), adx_last(win)
             if wadx < 22.0: continue
             sig = "CE" if (p9 <= p21 and e9 > e21 and c > we200) else ("PE" if (p9 >= p21 and e9 < e21 and c < we200) else None)
             if not sig: continue
             sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
             risk = abs(c - sl)
             if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
-            sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
+            sl_r, res_r, ex_dt, end_j, ex_t, ex_why = -1.0, 0.0, dt, i, hm, "EOD"
             for j in range(i + 1, len(rows)):
                 dtj, hj, lj, cj = rows[j][:4]
                 if dtj.date() != day: break
@@ -381,53 +380,47 @@ def run_1y_live():
                 lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
                 hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
                 cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
-                if lo_r <= sl_r: res_r = sl_r; break
+                if lo_r <= sl_r:
+                    res_r, ex_t = sl_r, dtj.strftime("%H:%M")
+                    ex_why = "SL" if sl_r < 0 else ("BE" if sl_r == 0 else f"T{int(sl_r)}R")
+                    break
                 if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
-                if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
-                if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
+                if dtj.strftime("%H:%M") >= "15:15":
+                    res_r, ex_t, ex_why = cl_r, "15:20", "EOD"
+                    break
             pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-            done.add(day); sig_cnt += 1
-            evs.append((dt, ex_dt, name, cost1, pnl1))
-        src_info.append(f"{name[:2]}:{sig_cnt}T")
+            done.add(day)
+            evs.append((dt, ex_dt, name, cost1, pnl1, ex_t, ex_why))
 
     evs.sort(key=lambda x: (x[0], x[2]))
-    def run_m(comp):
-        bal, added, low, tk, sk, wins, act, by_m = 15000.0, 0.0, 15000.0, 0, 0, 0, [], {}
-        for ed, xd, nm, cost1, pnl1 in evs:
-            act_n = []
-            for a_xd, a_m, a_p, a_ym in act:
-                if a_xd <= ed:
-                    bal += a_p; low = min(low, bal); by_m[a_ym][2] += a_p
-                    if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
-                    by_m[a_ym][3] = bal
-                else: act_n.append((a_xd, a_m, a_p, a_ym))
-            act = act_n
-            ym = ed.strftime("%Y-%m")
-            if ym not in by_m: by_m[ym] = [0, 0, 0.0, bal, 1]
-            free = bal - sum(x[1] for x in act)
-            if free < cost1: sk += 1; by_m[ym][1] += 1; continue
-            lots = min(max(1, int(bal // 25000)), int(free // cost1)) if comp else 1
-            net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
-            tk += 1
-            if net > 0: wins += 1
-            by_m[ym][0] += 1; by_m[ym][4] = max(by_m[ym][4], lots)
-            act.append((xd, lots * cost1, net, ym))
-        for _, _, a_p, a_ym in act:
-            bal += a_p; low = min(low, bal); by_m[a_ym][2] += a_p
-            if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
-            by_m[a_ym][3] = bal
-        return tk, sk, wins, added, low, bal, by_m
-
-    t1, s1, w1, a1, l1, b1, _ = run_m(False)
-    tc, sc, wc, ac, lc, bc, bm = run_m(True)
-    pm = sum(1 for v in bm.values() if v[2] > 0)
-    nm_c = sum(1 for v in bm.values() if v[2] <= 0)
-    ml = [f"{ym} ({v[4]}L) | T:{v[0]} S:{v[1]} | {v[2]:+,.0f} | Bal ₹{v[3]:,.0f}" for ym, v in sorted(bm.items())]
+    bal, added, tk, sk, wins, act, tlines, tot1 = 15000.0, 0.0, 0, 0, 0, [], [], 0.0
+    for ed, xd, nm, cost1, pnl1, ext, why in evs:
+        act_n = []
+        for a_xd, a_m, a_p in act:
+            if a_xd <= ed:
+                bal += a_p
+                if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
+            else: act_n.append((a_xd, a_m, a_p))
+        act = act_n
+        free = bal - sum(x[1] for x in act)
+        if free < cost1:
+            sk += 1
+            tlines.append(f"{ed.strftime('%d%b%y')} {nm[:2]} {ext}(SKIP)")
+            continue
+        lots = min(max(1, int(bal // 25000)), int(free // cost1))
+        net = (pnl1 * lots) - (55.0 + 10.0 * (lots - 1))
+        net1 = pnl1 - 55.0
+        tot1 += net1; tk += 1
+        if net > 0: wins += 1
+        act.append((xd, lots * cost1, net))
+        tlines.append(f"{ed.strftime('%d%b%y')} {nm[:2]}({lots}L)|{ext}({why})|₹{net:+,.0f}")
+    for _, _, a_p in act:
+        bal += a_p
+        if bal < 15000.0: top = 15000.0 - bal; bal += top; added += top
     return (
-        f"<b>1-YEAR EXACT 1253-CANDLE COMBO TEST</b>\n"
-        f"Data: " + " | ".join(src_info) + f" ({len(evs)} Sig)\n\n"
-        f"<b>1) 1-Lot Fixed:</b> T:{t1} S:{s1} | Win:{w1*100/t1:.0f}% | Add:₹{a1:,.0f} | Low:₹{l1:,.0f} | <b>Net:₹{b1-(15000+a1):+,.0f}</b>\n\n"
-        f"<b>2) Safe Comp (1L/₹25k, {pm}W/{nm_c}L):</b>\n" + "\n".join(ml) + "\n\n"
-        f"Taken:{tc} Skip:{sc} | Win:{wc*100/tc:.0f}% | Add:₹{ac:,.0f} | Low:₹{lc:,.0f}\n"
-        f"Final:₹{bc:,.0f} | <b>TRUE NET: ₹{bc-(15000+ac):+,.0f}</b>"
+        f"<b>1Y DAY-BY-DAY (1:1->Cost, 1:2->1:1)</b>\n"
+        + "\n".join(tlines) +
+        f"\n\nTaken:{tk} Skip:{sk} | Win:{wins*100/tk:.0f}%\n"
+        f"1-Lot Net: ₹{tot1:+,.0f} | Add:₹{added:,.0f}\n"
+        f"Comp Final: ₹{bal:,.0f} | <b>Net: ₹{bal-(15000+added):+,.0f}</b>"
     )
