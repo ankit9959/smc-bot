@@ -325,16 +325,44 @@ def run_1y_monday():
 
 def run_1y_live():
     import time
-    def ema_last(vals, p):
-        k = 2.0 / (p + 1)
-        e = vals[0]
-        for v in vals[1:]: e = v * k + e * (1.0 - k)
-        return e
-    def adx_last(win):
+    ak, _, _, _, px = _cfg()
+    jwt, _ = ensure_login()
+    end = datetime.now(IST)
+    idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
+
+    def fetch_tf(name, iv, ch_d, n_ch):
+        tok = IDX_TOKS[name]
+        all_rows, seen = [], set()
+        for k in range(n_ch, 0, -1):
+            f_dt = end - timedelta(days=k * ch_d)
+            t_dt = end - timedelta(days=(k - 1) * ch_d)
+            p = {"exchange": "NSE", "symboltoken": tok, "interval": iv, "fromdate": f_dt.strftime("%Y-%m-%d 09:15"), "todate": t_dt.strftime("%Y-%m-%d 15:30")}
+            for _ in range(2):
+                try:
+                    r = requests.post(CANDLE_URL, headers=_hdr(ak, jwt), json=p, proxies=px, timeout=15).json()
+                    data = r.get("data") or []
+                    if data:
+                        for x in data:
+                            ts = int(datetime.fromisoformat(x[0]).timestamp())
+                            if ts not in seen:
+                                seen.add(ts)
+                                all_rows.append((datetime.fromtimestamp(ts, IST), float(x[2]), float(x[3]), float(x[4])))
+                        break
+                except Exception: pass
+                time.sleep(0.8)
+            time.sleep(0.35)
+        all_rows.sort(key=lambda z: z[0])
+        out, e9, e21, e200 = [], None, None, None
+        for dt, h, l, c in all_rows:
+            e9 = c if e9 is None else c * 0.2 + e9 * 0.8
+            e21 = c if e21 is None else c * (2/22) + e21 * (20/22)
+            e200 = c if e200 is None else c * (2/201) + e200 * (199/201)
+            out.append((dt, h, l, c, e9, e21, e200))
+        adx_v = [0.0]*len(out)
         atr = psm = nsm = adx = 0.0
-        for k in range(1, len(win)):
-            _, h, l, c = win[k][:4]
-            _, ph, pl, pc = win[k-1][:4]
+        for k in range(1, len(out)):
+            _, h, l, c = out[k][:4]
+            _, ph, pl, pc = out[k-1][:4]
             tr = max(h - l, abs(h - pc), abs(l - pc))
             up, dn = h - ph, pl - l
             pdm = up if (up > dn and up > 0) else 0.0
@@ -346,54 +374,46 @@ def run_1y_live():
             ndi = (100 * nsm / atr) if atr > 0 else 0.0
             dx = (100 * abs(pdi - ndi) / (pdi + ndi)) if (pdi + ndi) > 0 else 0.0
             adx = adx * (13/14) + dx / 14
-        return adx
+            adx_v[k] = adx
+        return out, adx_v
 
-    idxs = [("BANKNIFTY", 30, 8250.0), ("FINNIFTY", 60, 8250.0), ("NIFTY 50", 65, 8125.0)]
-    cands = []
-    for name, lot, cost1 in idxs:
-        time.sleep(0.6)
-        rows = fetch_1y_5m(name)
-        done = set()
-        for i in range(250, len(rows) - 1):
-            dt, hi, lo, c, e9, e21, e200 = rows[i]
-            if dt.weekday() not in (1, 2, 4): continue
-            day = dt.date()
-            if day in done: continue
-            hm = dt.strftime("%H:%M")
-            if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30")): continue
-            p9, p21 = rows[i-1][4], rows[i-1][5]
-            if not ((p9 <= p21 and e9 > e21) or (p9 >= p21 and e9 < e21)): continue
-            win = rows[max(0, i - 1252):i + 1]
-            cl = [x[3] for x in win]
-            we200, wadx = ema_last(cl, 200), adx_last(win)
-            sig = "CE" if (p9 <= p21 and e9 > e21 and c > we200) else ("PE" if (p9 >= p21 and e9 < e21 and c < we200) else None)
-            if not sig: continue
-            sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
-            risk = abs(c - sl)
-            if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
-            sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
-            for j in range(i + 1, len(rows)):
-                dtj, hj, lj, cj = rows[j][:4]
-                if dtj.date() != day: break
-                end_j, ex_dt = j, dtj
-                lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
-                hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
-                cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
-                if lo_r <= sl_r: res_r = sl_r; break
-                if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
-                if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
-                if dtj.strftime("%H:%M") >= "15:15": res_r = cl_r; break
-            pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * 0.15 * lot)
-            done.add(day)
-            cands.append((dt, ex_dt, name, cost1, pnl1, wadx))
-
-    cands.sort(key=lambda x: (x[0], x[2]))
-    out = ["<b>1-YEAR ADX LEVEL TEST (COMBO Rules)</b>"]
-    for th in (16, 18, 19, 20, 22):
-        evs = [e for e in cands if e[5] >= th]
+    def test_tf(label, iv, ch_d, n_ch, th_bar):
+        evs = []
+        for name, lot, cost1 in idxs:
+            rows, adx_v = fetch_tf(name, iv, ch_d, n_ch)
+            done = set()
+            for i in range(200, len(rows) - 1):
+                dt, hi, lo, c, e9, e21, e200 = rows[i]
+                if dt.weekday() not in (1, 2, 4): continue
+                day = dt.date()
+                if day in done: continue
+                hm = dt.strftime("%H:%M")
+                if not (("09:20" <= hm <= "10:30") or ("13:30" <= hm <= "14:30")): continue
+                if adx_v[i] < 22.0: continue
+                p9, p21 = rows[i-1][4], rows[i-1][5]
+                sig = "CE" if (p9 <= p21 and e9 > e21 and c > e200) else ("PE" if (p9 >= p21 and e9 < e21 and c < e200) else None)
+                if not sig: continue
+                sl = min(rows[j][2] for j in range(i - 5, i + 1)) if sig == "CE" else max(rows[j][1] for j in range(i - 5, i + 1))
+                risk = abs(c - sl)
+                if risk <= 0 or risk / c < 0.0005 or risk / c > 0.01: continue
+                sl_r, res_r, ex_dt, end_j = -1.0, 0.0, dt, i
+                for j in range(i + 1, len(rows)):
+                    dtj, hj, lj, cj = rows[j][:4]
+                    if dtj.date() != day: break
+                    end_j, ex_dt = j, dtj
+                    lo_r = ((lj - c) if sig == "CE" else (c - hj)) / risk
+                    hi_r = ((hj - c) if sig == "CE" else (c - lj)) / risk
+                    cl_r = ((cj - c) if sig == "CE" else (c - cj)) / risk
+                    if lo_r <= sl_r: res_r = sl_r; break
+                    if hi_r >= 1.0: sl_r = max(sl_r, float(int(hi_r) - 1))
+                    if hi_r >= 1.5: sl_r = max(sl_r, 0.5)
+                    if dtj.strftime("%H:%M") >= "15:19": res_r = cl_r; break
+                pnl1 = (res_r * risk * 0.35 * lot) - ((end_j - i) * th_bar * lot)
+                done.add(day); evs.append((dt, ex_dt, name, cost1, pnl1))
+        evs.sort(key=lambda x: (x[0], x[2]))
         def run_m(comp):
             bal, added, low, tk, sk, wins, act, by_m = 15000.0, 0.0, 15000.0, 0, 0, 0, [], {}
-            for ed, xd, nm, cost1, pnl1, _ in evs:
+            for ed, xd, nm, cost1, pnl1 in evs:
                 act_n = []
                 for a_xd, a_m, a_p, a_ym in act:
                     if a_xd <= ed:
@@ -415,8 +435,11 @@ def run_1y_live():
             pm = sum(1 for v in by_m.values() if v > 0)
             nm_c = sum(1 for v in by_m.values() if v <= 0)
             wr = (wins * 100 / tk) if tk else 0
-            return tk, sk, wr, pm, nm_c, added, bal - (15000 + added)
-        t1, s1, w1, p1, n1, a1, net1 = run_m(False)
-        tc, sc, wc, pc, nc, ac, netc = run_m(True)
-        out.append(f"\n<b>ADX >= {th}:</b>\n1L: T:{t1} S:{s1} | Win:{w1:.0f}% | {p1}W/{n1}L | Add:₹{a1:,.0f} | <b>₹{net1:+,.0f}</b>\nComp: <b>₹{netc:+,.0f}</b>")
-    return "\n".join(out)
+            return tk, sk, wr, pm, nm_c, added, low, bal - (15000 + added)
+        t1, s1, w1, p1, n1, a1, l1, net1 = run_m(False)
+        tc, sc, wc, pc, nc, ac, lc, netc = run_m(True)
+        return f"<b>{label}</b>\n1L: T:{t1} S:{s1} | Win:{w1:.0f}% | {p1}W/{n1}L | Add:₹{a1:,.0f} | <b>₹{net1:+,.0f}</b>\nComp: T:{tc} | Low:₹{l1:,.0f} | <b>₹{netc:+,.0f}</b>"
+
+    r3 = test_tf("1) 3-MINUTE (1 Year, ADX>=22)", "THREE_MINUTE", 30, 12, 0.09)
+    r1 = test_tf("2) 1-MINUTE (1 Year, ADX>=22)", "ONE_MINUTE", 15, 24, 0.03)
+    return "<b>1-YEAR COMBO: 3-MIN vs 1-MIN</b>\n\n" + r3 + "\n\n" + r1 + "\n\n<i>(5-Min Live Benchmark: T:70 | Win:61% | 9W/3L | Comp:₹+474,738)</i>"
